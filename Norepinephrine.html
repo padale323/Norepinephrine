@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Norepinephrine</title>
+    <style>
+        :root { --glow: #00ff66; --bg: #0a0c10; --dim: #8b949e; --blue: #58a6ff; --warn: #ffcc00; --danger: #ff4444; }
+        body { margin: 0; background: var(--bg); color: var(--glow); font-family: 'Consolas', monospace; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+        #output { flex: 1; padding: 25px; overflow-y: auto; white-space: pre-wrap; font-size: 14px; line-height: 1.5; }
+        .input-row { display: flex; align-items: center; padding: 15px 25px; background: #000; border-top: 1px solid #21262d; }
+        #tIn { flex: 1; background: transparent; border: none; color: var(--glow); outline: none; font-family: inherit; font-size: 16px; margin-left: 10px; }
+        .prompt { color: var(--blue); font-weight: bold; }
+        .cmd { color: #d2a8ff; font-weight: bold; }
+        .warning-text { color: var(--warn); }
+        .danger-text { color: var(--danger); font-weight: bold; }
+        hr { border: 0; border-top: 1px solid #21262d; margin: 10px 0; }
+    </style>
+</head>
+<body>
+
+<div id="output"></div>
+<div class="input-row">
+    <span class="prompt">></span>
+    <input id="tIn" autocomplete="off" autofocus spellcheck="false">
+</div>
+
+<script>
+const out = document.getElementById("output");
+const tin = document.getElementById("tIn");
+let history = [];
+let historyIndex = -1;
+
+const VERSION_STRING = "Norepinephrine [Beta 3]";
+
+// JS Terminal State
+let jsActive = false;
+let awaitingJsConfirm = false;
+let jsPendingPerm = false;
+let consoleRedirected = false;
+
+let breachTimestamps = [];
+const BREACH_WINDOW = 10000;
+const BREACH_MAX = 3;
+
+let tosVersionRemote = null;
+let tosContent = "";
+let tosAcceptedVersion = null;
+
+// Switched to localStorage because cookies fail on local file:/// URLs
+function setStorage(name, value) {
+    try { localStorage.setItem(name, value); } catch(e) {}
+}
+
+function getStorage(name) {
+    try { return localStorage.getItem(name); } catch(e) { return null; }
+}
+
+const print = (t, html = false) => {
+    const div = document.createElement("div");
+    if (t === undefined) return;
+    const textContent = typeof t === 'object' ? JSON.stringify(t, null, 2) : String(t);
+    html ? div.innerHTML = textContent : div.textContent = textContent;
+    out.appendChild(div);
+    out.scrollTop = out.scrollHeight;
+};
+
+const originalLog = console.log;
+console.log = (...args) => {
+    originalLog(...args);
+    if (consoleRedirected || jsActive) {
+        args.forEach(arg => print(arg));
+    }
+};
+
+async function loadTOS() {
+    try {
+        const r = await fetch("https://raw.githubusercontent.com/Norepinephrine-Tools/Terms/refs/heads/main/TOS.txt");
+        if (!r.ok) throw new Error("Network response failed");
+        const text = await r.text();
+        const lines = text.split("\n");
+        const first = lines[0].trim();
+        const match = first.match(/tosver\s*=\s*(\d+)/i);
+        if (match) {
+            tosVersionRemote = match[1];
+            tosContent = lines.slice(1).join("\n");
+        } else {
+            tosVersionRemote = "1";
+            tosContent = text; // Fallback if format is different
+        }
+    } catch {
+        // Fallback to prevent soft-locking if the internet is down or CORS blocks the fetch
+        tosVersionRemote = "1";
+        tosContent = "Fallback TOS Loaded.\n1. Do not use this tool for malicious purposes.\n2. Standard terms apply.";
+    }
+    tosAcceptedVersion = getStorage("tosver");
+}
+
+function tosValid() {
+    return tosAcceptedVersion && tosVersionRemote && tosAcceptedVersion === tosVersionRemote;
+}
+
+const commands = {
+    "peoplesearch": "Search individuals via external records.",
+    "wiki": "Wikipedia summary.",
+    "ip": "Show public IP.",
+    "breached": "Check breach records.",
+    "js activate": "Enable terminal JavaScript execution.",
+    "js deactivate": "Disable terminal JavaScript execution.",
+    "redirect-console": "Toggle console.log redirection to terminal.",
+    "version": "Show current version info.",
+    "changelog": "Show recent updates.",
+    "tos": "Display Terms of Service.",
+    "accept": "Accept current Terms of Service.",
+    "clear": "Clear screen.",
+    "help": "Show this menu."
+};
+
+async function handle(input) {
+    const raw = input.trim();
+    if (!raw) return;
+
+    if (awaitingJsConfirm) {
+        print(`\n> ${raw}`);
+        const choice = raw.toLowerCase();
+        if (choice === 'y') {
+            jsActive = true;
+            if (jsPendingPerm) {
+                setStorage("js_enabled", "true");
+                print("JS Terminal Activated PERMANENTLY.");
+            } else {
+                print("JS Terminal Activated for this session.");
+            }
+            print("Terminal now supports direct JS. console.log() is redirected here.");
+        } else {
+            print("Activation aborted.");
+        }
+        awaitingJsConfirm = false;
+        jsPendingPerm = false;
+        return;
+    }
+
+    print(`\n> ${raw}`);
+    history.push(raw);
+    historyIndex = history.length;
+
+    const parts = raw.split(" ");
+    const cmd = parts[0].toLowerCase();
+    let args = parts.slice(1).join(" ");
+
+    // BULLETPROOF TOS GUARD
+    if (!tosValid() && cmd !== "tos" && cmd !== "accept") {
+        if (!tosAcceptedVersion) {
+            return print("You must accept the Terms of Service. Type 'tos' to read, then 'accept'.");
+        }
+        if (tosAcceptedVersion !== tosVersionRemote) {
+            return print("TOS updated. You must reaccept. Type 'tos' to read, then 'accept'.");
+        }
+    }
+
+    const isBuiltIn = commands.hasOwnProperty(cmd) || cmd === "js";
+
+    if (!isBuiltIn && jsActive) {
+        try {
+            const result = eval(raw);
+            if (result !== undefined) print(result);
+            return;
+        } catch (e) {
+            return print(`JS Error: ${e.message}`);
+        }
+    }
+
+    switch(cmd) {
+        case 'redirect-console':
+            consoleRedirected = !consoleRedirected;
+            print(`Console redirection is now ${consoleRedirected ? 'ENABLED' : 'DISABLED'}.`);
+            break;
+
+        case 'js':
+            if (parts[1] === 'activate') {
+                jsPendingPerm = parts[2] === '-p';
+                print("<hr>", true);
+                print("<span class='danger-text'>!! SECURITY WARNING !!</span>", true);
+                print("<span class='warning-text'>Enabling JavaScript execution allows the terminal to run any code you type.</span>", true);
+                print("<span class='warning-text'>NEVER paste commands or scripts from people you do not trust.</span>", true);
+                print("Nothing is Norepinephrine's fault for what you do with JS.");
+                print("Confirm activation? (y/n)");
+                awaitingJsConfirm = true;
+                return;
+            }
+            if (parts[1] === 'deactivate') {
+                jsActive = false;
+                setStorage("js_enabled", "false");
+                return print("JS Terminal deactivated.");
+            }
+            if (!jsActive) return print("JS Terminal is not active. Type 'js activate' to begin.");
+            try {
+                const result = eval(args);
+                if (result !== undefined) print(result);
+            } catch (e) {
+                print(`Runtime Error: ${e.message}`);
+            }
+            break;
+
+        case 'version':
+            print("<hr>", true);
+            print(VERSION_STRING);
+            print("Status: Stable Beta");
+            print("<hr>", true);
+            break;
+
+        case 'changelog':
+            print("<hr>", true);
+            print("Beta 3 Changes:");
+            print(" - Added 'redirect-console' command to toggle log capturing.");
+            print(" - Added JS.");
+            print(" - Added TOS (Still aplies to previous versions))");
+            print("<hr>", true);
+            break;
+
+        case 'peoplesearch':
+            if (!args) return print("Error: Name required.");
+            const useAll = args.includes("-all");
+            let cleanArgs = args.replace("-all", "").split(',').map(i => `"${i.trim()}"`).join(" ");
+            let url = `https://www.google.com/search?q=${encodeURIComponent(cleanArgs)}`;
+            if (!useAll) url += encodeURIComponent(" site:radaris.com");
+            window.open(url, '_blank');
+            print(`Redirecting to ${useAll ? "Global" : "Radaris"} results...`);
+            break;
+
+        case 'tos':
+            print("<hr>", true);
+            print(tosContent);
+            print("<hr>", true);
+            break;
+
+        case 'accept':
+            if (!tosVersionRemote) return print("Error: TOS not fully loaded yet.");
+            setStorage("tosver", tosVersionRemote);
+            tosAcceptedVersion = tosVersionRemote;
+            print("TOS accepted. You may now use the terminal.");
+            break;
+
+        case 'help':
+            print("<hr>", true);
+            for (let c in commands) print(`<span class="cmd">${c}</span>: ${commands[c]}`, true);
+            print("<hr>", true);
+            break;
+
+        case 'breached':
+            if (!args) return print("Error: Email or phone required.");
+            const now = Date.now();
+            breachTimestamps = breachTimestamps.filter(t => now - t < BREACH_WINDOW);
+            if (breachTimestamps.length >= BREACH_MAX) return print("Rate limit reached.");
+            breachTimestamps.push(now);
+            try {
+                let r = await fetch(`https://api.xposedornot.com/v1/check-email/${encodeURIComponent(args)}`);
+                if (r.status === 404) return print("No breaches found.");
+                let j = await r.json();
+                print(`Breaches: ${j.breaches.length}`);
+                j.breaches.forEach(b => print(`- ${b.breach}`));
+            } catch { print("Lookup failed."); }
+            break;
+
+        case 'wiki':
+            try {
+                let r = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${args.replace(/ /g, "_")}`);
+                let j = await r.json();
+                print(j.extract || "No entry found.");
+            } catch { print("Error connecting to Wiki."); }
+            break;
+
+        case 'ip':
+            try {
+                let r = await fetch("https://api.ipify.org?format=json");
+                let j = await r.json();
+                print(`Public IP: ${j.ip}`);
+            } catch { print("Request failed."); }
+            break;
+
+        case 'clear':
+            out.innerHTML = "";
+            break;
+
+        default:
+            print(`Unknown command: '${cmd}'. Type 'help'.`);
+    }
+}
+
+tin.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+        handle(tin.value);
+        tin.value = "";
+    } else if (e.key === "ArrowUp") {
+        if (historyIndex > 0) {
+            historyIndex--;
+            tin.value = history[historyIndex];
+        }
+        e.preventDefault();
+    } else if (e.key === "ArrowDown") {
+        if (historyIndex < history.length - 1) {
+            historyIndex++;
+            tin.value = history[historyIndex];
+        } else {
+            historyIndex = history.length;
+            tin.value = "";
+        }
+        e.preventDefault();
+    }
+});
+
+document.addEventListener("click", () => tin.focus());
+
+(async () => {
+    await loadTOS();
+    print(VERSION_STRING);
+    
+    if (getStorage("js_enabled") === "true") {
+        jsActive = true;
+        print("[JS TERMINAL ACTIVE]");
+    }
+
+    if (!tosAcceptedVersion)
+        print("You must accept the Terms of Service. Type 'tos' to view.");
+    else if (tosAcceptedVersion !== tosVersionRemote)
+        print("TOS updated. Type 'tos' to review and 'accept' to continue.");
+    else
+        print("Type 'help' for available operations.");
+})();
+</script>
+</body>
+</html>
