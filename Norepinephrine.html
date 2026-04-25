@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <title>Norepinephrine</title>
     <style>
-        :root { --glow: #00ff66; --bg: #0a0c10; --dim: #8b949e; --blue: #58a6ff; --warn: #ffcc00; --danger: #ff4444; }
+        :root { --glow: #ffffff; --bg: #0a0c10; --dim: #8b949e; --blue: #58a6ff; --warn: #ffcc00; --danger: #ff4444; }
         body { margin: 0; background: var(--bg); color: var(--glow); font-family: 'Consolas', monospace; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
         #output { flex: 1; padding: 25px; overflow-y: auto; white-space: pre-wrap; font-size: 14px; line-height: 1.5; }
         .input-row { display: flex; align-items: center; padding: 15px 25px; background: #000; border-top: 1px solid #21262d; }
@@ -19,18 +19,34 @@
 <body>
 
 <div id="output"></div>
-<div class="input-row">
+<div class="input-row" id="input-container">
     <span class="prompt">></span>
     <input id="tIn" autocomplete="off" autofocus spellcheck="false">
 </div>
 
 <script>
+// ==========================================
+// BOOT INTERCEPTOR FOR INSTALLER
+// ==========================================
+if (localStorage.getItem("run_installer") === "true") {
+    localStorage.removeItem("run_installer");
+    const script = document.createElement("script");
+    script.src = "https://raw.githubusercontent.com/padale323/Norepinephrine-Installer/refs/heads/main/Installer.js";
+    document.head.appendChild(script);
+    
+    // Stop the rest of the terminal script from loading normally
+    throw new Error("Boot halted for Installer setup."); 
+}
+
+// ==========================================
+// MAIN TERMINAL LOGIC
+// ==========================================
 const out = document.getElementById("output");
 const tin = document.getElementById("tIn");
 let history = [];
 let historyIndex = -1;
 
-const VERSION_STRING = "Norepinephrine [Beta 3]";
+const VERSION_STRING = "Norepinephrine [Beta 4]";
 
 // JS Terminal State
 let jsActive = false;
@@ -38,15 +54,19 @@ let awaitingJsConfirm = false;
 let jsPendingPerm = false;
 let consoleRedirected = false;
 
-let breachTimestamps = [];
-const BREACH_WINDOW = 10000;
-const BREACH_MAX = 3;
-
 let tosVersionRemote = null;
 let tosContent = "";
 let tosAcceptedVersion = null;
 
-// Switched to localStorage because cookies fail on local file:/// URLs
+// Plugin Storage Architecture
+window.customCommands = {};
+window.customHelp = {};
+
+window.registerCommand = function(cmdName, description, handlerFunction) {
+    window.customCommands[cmdName.toLowerCase()] = handlerFunction;
+    window.customHelp[cmdName.toLowerCase()] = description;
+};
+
 function setStorage(name, value) {
     try { localStorage.setItem(name, value); } catch(e) {}
 }
@@ -78,17 +98,16 @@ async function loadTOS() {
         if (!r.ok) throw new Error("Network response failed");
         const text = await r.text();
         const lines = text.split("\n");
-        const first = lines[0].trim();
+        const first = lines.trim();
         const match = first.match(/tosver\s*=\s*(\d+)/i);
         if (match) {
-            tosVersionRemote = match[1];
+            tosVersionRemote = match;
             tosContent = lines.slice(1).join("\n");
         } else {
             tosVersionRemote = "1";
-            tosContent = text; // Fallback if format is different
+            tosContent = text; 
         }
     } catch {
-        // Fallback to prevent soft-locking if the internet is down or CORS blocks the fetch
         tosVersionRemote = "1";
         tosContent = "Fallback TOS Loaded.\n1. Do not use this tool for malicious purposes.\n2. Standard terms apply.";
     }
@@ -100,10 +119,8 @@ function tosValid() {
 }
 
 const commands = {
-    "peoplesearch": "Search individuals via external records.",
-    "wiki": "Wikipedia summary.",
-    "ip": "Show public IP.",
-    "breached": "Check breach records.",
+    "installer": "Launch the visual plugin installer.",
+    "plugin": "Manage plugins manually (add <url>, list, remove <index>).",
     "js activate": "Enable terminal JavaScript execution.",
     "js deactivate": "Disable terminal JavaScript execution.",
     "redirect-console": "Toggle console.log redirection to terminal.",
@@ -144,7 +161,7 @@ async function handle(input) {
     historyIndex = history.length;
 
     const parts = raw.split(" ");
-    const cmd = parts[0].toLowerCase();
+    const cmd = parts.toLowerCase();
     let args = parts.slice(1).join(" ");
 
     // BULLETPROOF TOS GUARD
@@ -157,9 +174,10 @@ async function handle(input) {
         }
     }
 
-    const isBuiltIn = commands.hasOwnProperty(cmd) || cmd === "js";
+    const isBuiltIn = commands.hasOwnProperty(cmd) || cmd === "js" || cmd === "installer" || cmd === "plugin";
+    const isCustom = window.customCommands.hasOwnProperty(cmd);
 
-    if (!isBuiltIn && jsActive) {
+    if (!isBuiltIn && !isCustom && jsActive) {
         try {
             const result = eval(raw);
             if (result !== undefined) print(result);
@@ -169,15 +187,63 @@ async function handle(input) {
         }
     }
 
+    // Handle Custom Installed Commands
+    if (isCustom && !isBuiltIn) {
+        try {
+            window.customCommands[cmd](args);
+        } catch (e) {
+            print(`Plugin Command Error: ${e.message}`);
+        }
+        return;
+    }
+
     switch(cmd) {
+        case 'installer':
+            print("Preparing visual installer... Rebooting terminal.");
+            setStorage("run_installer", "true");
+            setTimeout(() => window.location.reload(), 1000);
+            break;
+
+        case 'plugin':
+            let subCmd = parts;
+            let pluginUrls = JSON.parse(getStorage("plugins") || "[]");
+            
+            if (subCmd === "add" && parts) {
+                if (!pluginUrls.includes(parts)) {
+                    pluginUrls.push(parts);
+                    setStorage("plugins", JSON.stringify(pluginUrls));
+                    print(`Added plugin: ${parts}. Type 'installer' to apply or restart terminal.`);
+                } else {
+                    print("Plugin already installed.");
+                }
+            } else if (subCmd === "list") {
+                print("<hr>", true);
+                print("Installed Plugins:");
+                if (pluginUrls.length === 0) print(" - None installed.");
+                pluginUrls.forEach((url, i) => print(` [${i}] ${url}`));
+                print("<hr>", true);
+            } else if (subCmd === "remove" && parts !== undefined) {
+                let idx = parseInt(parts);
+                if (!isNaN(idx) && idx >= 0 && idx < pluginUrls.length) {
+                    let removed = pluginUrls.splice(idx, 1);
+                    setStorage("plugins", JSON.stringify(pluginUrls));
+                    print(`Removed plugin: ${removed}. Restart terminal to apply.`);
+                } else {
+                    print("Invalid index. Use 'plugin list' to find the index.");
+                }
+            } else {
+                print("Usage: plugin add <url> | plugin list | plugin remove <index>");
+            }
+            break;
+
         case 'redirect-console':
             consoleRedirected = !consoleRedirected;
             print(`Console redirection is now ${consoleRedirected ? 'ENABLED' : 'DISABLED'}.`);
             break;
 
         case 'js':
-            if (parts[1] === 'activate') {
-                jsPendingPerm = parts[2] === '-p';
+            if (parts === 'activate') {
+                jsPendingPerm = parts === '-p';
                 print("<hr>", true);
                 print("<span class='danger-text'>!! SECURITY WARNING !!</span>", true);
                 print("<span class='warning-text'>Enabling JavaScript execution allows the terminal to run any code you type.</span>", true);
@@ -187,7 +253,7 @@ async function handle(input) {
                 awaitingJsConfirm = true;
                 return;
             }
-            if (parts[1] === 'deactivate') {
+            if (parts === 'deactivate') {
                 jsActive = false;
                 setStorage("js_enabled", "false");
                 return print("JS Terminal deactivated.");
@@ -210,21 +276,11 @@ async function handle(input) {
 
         case 'changelog':
             print("<hr>", true);
-            print("Beta 3 Changes:");
-            print(" - Added 'redirect-console' command to toggle log capturing.");
-            print(" - Added JS.");
-            print(" - Added TOS (Still aplies to previous versions))");
+            print("Beta 4 Changes:");
+            print(" - Added visual Plugin Installer system.");
+            print(" - Added dynamic custom commands architecture.");
+            print(" - Stripped deprecated commands.");
             print("<hr>", true);
-            break;
-
-        case 'peoplesearch':
-            if (!args) return print("Error: Name required.");
-            const useAll = args.includes("-all");
-            let cleanArgs = args.replace("-all", "").split(',').map(i => `"${i.trim()}"`).join(" ");
-            let url = `https://www.google.com/search?q=${encodeURIComponent(cleanArgs)}`;
-            if (!useAll) url += encodeURIComponent(" site:radaris.com");
-            window.open(url, '_blank');
-            print(`Redirecting to ${useAll ? "Global" : "Radaris"} results...`);
             break;
 
         case 'tos':
@@ -242,39 +298,14 @@ async function handle(input) {
 
         case 'help':
             print("<hr>", true);
+            print("--- Built-in Commands ---");
             for (let c in commands) print(`<span class="cmd">${c}</span>: ${commands[c]}`, true);
+            
+            if (Object.keys(window.customHelp).length > 0) {
+                print("\n--- Plugin Commands ---");
+                for (let c in window.customHelp) print(`<span class="cmd">${c}</span>: ${window.customHelp[c]}`, true);
+            }
             print("<hr>", true);
-            break;
-
-        case 'breached':
-            if (!args) return print("Error: Email or phone required.");
-            const now = Date.now();
-            breachTimestamps = breachTimestamps.filter(t => now - t < BREACH_WINDOW);
-            if (breachTimestamps.length >= BREACH_MAX) return print("Rate limit reached.");
-            breachTimestamps.push(now);
-            try {
-                let r = await fetch(`https://api.xposedornot.com/v1/check-email/${encodeURIComponent(args)}`);
-                if (r.status === 404) return print("No breaches found.");
-                let j = await r.json();
-                print(`Breaches: ${j.breaches.length}`);
-                j.breaches.forEach(b => print(`- ${b.breach}`));
-            } catch { print("Lookup failed."); }
-            break;
-
-        case 'wiki':
-            try {
-                let r = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${args.replace(/ /g, "_")}`);
-                let j = await r.json();
-                print(j.extract || "No entry found.");
-            } catch { print("Error connecting to Wiki."); }
-            break;
-
-        case 'ip':
-            try {
-                let r = await fetch("https://api.ipify.org?format=json");
-                let j = await r.json();
-                print(`Public IP: ${j.ip}`);
-            } catch { print("Request failed."); }
             break;
 
         case 'clear':
@@ -308,7 +339,20 @@ tin.addEventListener("keydown", (e) => {
     }
 });
 
-document.addEventListener("click", () => tin.focus());
+document.addEventListener("click", () => {
+    if (document.activeElement !== tin) tin.focus();
+});
+
+// Load user-installed plugins globally
+function loadPlugins() {
+    let pluginUrls = JSON.parse(getStorage("plugins") || "[]");
+    pluginUrls.forEach(url => {
+        let s = document.createElement("script");
+        s.src = url;
+        s.onload = () => console.log(`[Plugin Loaded]: ${url}`);
+        document.head.appendChild(s);
+    });
+}
 
 (async () => {
     await loadTOS();
@@ -318,6 +362,8 @@ document.addEventListener("click", () => tin.focus());
         jsActive = true;
         print("[JS TERMINAL ACTIVE]");
     }
+
+    loadPlugins();
 
     if (!tosAcceptedVersion)
         print("You must accept the Terms of Service. Type 'tos' to view.");
