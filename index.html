@@ -30,10 +30,22 @@
 // ==========================================
 if (localStorage.getItem("run_installer") === "true") {
     localStorage.removeItem("run_installer");
-    const script = document.createElement("script");
-    script.src = "https://raw.githubusercontent.com/padale323/Norepinephrine-Installer/refs/heads/main/Installer.js";
-    document.head.appendChild(script);
-    throw new Error("Boot halted for Installer setup.");
+
+    fetch("https://raw.githubusercontent.com/padale323/Norepinephrine-Installer/refs/heads/main/Plugin.js")
+        .then(r => {
+            if (!r.ok) throw new Error(`Failed to fetch installer: ${r.status}`);
+            return r.text();
+        })
+        .then(code => {
+            new Function(code)();
+        })
+        .catch(err => {
+            console.error("[Norepinephrine] Installer load failed:", err);
+            // optionally print to terminal here if `print` is defined by this point
+        });
+
+    // No throw — just don't initialize the terminal
+    // Wrap everything else in the else block below
 }
 
 // ==========================================
