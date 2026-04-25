@@ -26,29 +26,6 @@
 
 <script>
 // ==========================================
-// BOOT INTERCEPTOR FOR INSTALLER
-// ==========================================
-if (localStorage.getItem("run_installer") === "true") {
-    localStorage.removeItem("run_installer");
-
-    fetch("https://raw.githubusercontent.com/padale323/Norepinephrine-Installer/refs/heads/main/Installer.js")
-        .then(r => {
-            if (!r.ok) throw new Error(`Failed to fetch installer: ${r.status}`);
-            return r.text();
-        })
-        .then(code => {
-            new Function(code)();
-        })
-        .catch(err => {
-            console.error("[Norepinephrine] Installer load failed:", err);
-            // optionally print to terminal here if `print` is defined by this point
-        });
-
-    // No throw — just don't initialize the terminal
-    // Wrap everything else in the else block below
-}
-
-// ==========================================
 // MAIN TERMINAL LOGIC
 // ==========================================
 const out = document.getElementById("output");
@@ -108,10 +85,10 @@ async function loadTOS() {
         if (!r.ok) throw new Error("Network response failed");
         const text = await r.text();
         const lines = text.split("\n");
-        const first = lines[0].trim(); // FIX: was lines.trim() — arrays have no .trim()
+        const first = lines[0].trim();
         const match = first.match(/tosver\s*=\s*(\d+)/i);
         if (match) {
-            tosVersionRemote = match[1]; // FIX: was match (full array) instead of capture group
+            tosVersionRemote = match[1];
             tosContent = lines.slice(1).join("\n");
         } else {
             tosVersionRemote = "1";
@@ -171,9 +148,9 @@ async function handle(input) {
     historyIndex = history.length;
 
     const parts = raw.split(" ");
-    const cmd = parts[0].toLowerCase(); // FIX: was parts.toLowerCase() — arrays have no .toLowerCase()
-    const subCmd = parts[1] ? parts[1].toLowerCase() : ""; // FIX: extracted separately from args
-    const args = parts.slice(2).join(" "); // FIX: args is everything after subCmd
+    const cmd = parts[0].toLowerCase();
+    const subCmd = parts[1] ? parts[1].toLowerCase() : "";
+    const args = parts.slice(2).join(" ");
 
     // BULLETPROOF TOS GUARD
     if (!tosValid() && cmd !== "tos" && cmd !== "accept") {
@@ -218,11 +195,11 @@ async function handle(input) {
         case 'plugin':
             let pluginUrls = JSON.parse(getStorage("plugins") || "[]");
 
-            if (subCmd === "add" && args) { // FIX: was parts[1]/parts[2], now uses subCmd/args
+            if (subCmd === "add" && args) {
                 if (!pluginUrls.includes(args)) {
                     pluginUrls.push(args);
                     setStorage("plugins", JSON.stringify(pluginUrls));
-                    print(`Added plugin: ${args}. Type 'installer' to apply or restart terminal.`);
+                    print(`Added plugin: ${args}. Restart terminal to apply.`);
                 } else {
                     print("Plugin already installed.");
                 }
@@ -232,7 +209,7 @@ async function handle(input) {
                 if (pluginUrls.length === 0) print(" - None installed.");
                 pluginUrls.forEach((url, i) => print(` [${i}] ${url}`));
                 print("<hr>", true);
-            } else if (subCmd === "remove" && args !== undefined) { // FIX: was parts[2]
+            } else if (subCmd === "remove" && args !== undefined) {
                 let idx = parseInt(args);
                 if (!isNaN(idx) && idx >= 0 && idx < pluginUrls.length) {
                     let removed = pluginUrls.splice(idx, 1);
@@ -252,7 +229,7 @@ async function handle(input) {
             break;
 
         case 'js':
-            if (subCmd === 'activate') { // FIX: was parts === 'activate' — comparing array to string
+            if (subCmd === 'activate') {
                 jsPendingPerm = parts[2] === '-p';
                 print("<hr>", true);
                 print("<span class='danger-text'>!! SECURITY WARNING !!</span>", true);
@@ -263,7 +240,7 @@ async function handle(input) {
                 awaitingJsConfirm = true;
                 return;
             }
-            if (subCmd === 'deactivate') { // FIX: same — was parts === 'deactivate'
+            if (subCmd === 'deactivate') {
                 jsActive = false;
                 setStorage("js_enabled", "false");
                 return print("JS Terminal deactivated.");
@@ -353,18 +330,32 @@ document.addEventListener("click", () => {
     if (document.activeElement !== tin) tin.focus();
 });
 
-// Load user-installed plugins globally
-function loadPlugins() {
-    let pluginUrls = JSON.parse(getStorage("plugins") || "[]");
-    pluginUrls.forEach(url => {
-        let s = document.createElement("script");
-        s.src = url;
-        s.onload = () => console.log(`[Plugin Loaded]: ${url}`);
-        document.head.appendChild(s);
-    });
+// ==========================================
+// FETCH + EVAL PLUGIN LOADER
+// ==========================================
+async function loadPluginFromUrl(url) {
+    try {
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        const code = await r.text();
+        new Function(code)();
+        print(`[Plugin Loaded]: ${url}`);
+    } catch (err) {
+        print(`<span class="danger-text">[Plugin Error] ${url}: ${err.message}</span>`, true);
+    }
 }
 
-(async () => {
+async function loadPlugins() {
+    const pluginUrls = JSON.parse(getStorage("plugins") || "[]");
+    for (const url of pluginUrls) {
+        await loadPluginFromUrl(url);
+    }
+}
+
+// ==========================================
+// BOOT SEQUENCE
+// ==========================================
+async function _bootTerminal() {
     await loadTOS();
     print(VERSION_STRING);
 
@@ -373,7 +364,7 @@ function loadPlugins() {
         print("[JS TERMINAL ACTIVE]");
     }
 
-    loadPlugins();
+    await loadPlugins();
 
     if (!tosAcceptedVersion)
         print("You must accept the Terms of Service. Type 'tos' to view.");
@@ -381,7 +372,32 @@ function loadPlugins() {
         print("TOS updated. Type 'tos' to review and 'accept' to continue.");
     else
         print("Type 'help' for available operations.");
-})();
+}
+
+// ==========================================
+// BOOT INTERCEPTOR FOR INSTALLER
+// ==========================================
+const _installerPending = localStorage.getItem("run_installer") === "true";
+
+if (_installerPending) {
+    localStorage.removeItem("run_installer");
+    fetch("https://raw.githubusercontent.com/padale323/Norepinephrine-Installer/refs/heads/main/Installer.js")
+        .then(r => {
+            if (!r.ok) throw new Error(`Server returned ${r.status}`);
+            return r.text();
+        })
+        .then(code => {
+            new Function(code)();
+        })
+        .catch(err => {
+            _bootTerminal().then(() => {
+                print(`<span class="danger-text">[Installer Error] Failed to load installer: ${err.message}</span>`, true);
+                print(`<span class="warning-text">Continuing in normal terminal mode.</span>`, true);
+            });
+        });
+} else {
+    _bootTerminal();
+}
 </script>
 </body>
 </html>
