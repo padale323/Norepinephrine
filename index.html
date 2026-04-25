@@ -33,9 +33,7 @@ if (localStorage.getItem("run_installer") === "true") {
     const script = document.createElement("script");
     script.src = "https://raw.githubusercontent.com/padale323/Norepinephrine-Installer/refs/heads/main/Plugin.js";
     document.head.appendChild(script);
-    
-    // Stop the rest of the terminal script from loading normally
-    throw new Error("Boot halted for Installer setup."); 
+    throw new Error("Boot halted for Installer setup.");
 }
 
 // ==========================================
@@ -98,14 +96,14 @@ async function loadTOS() {
         if (!r.ok) throw new Error("Network response failed");
         const text = await r.text();
         const lines = text.split("\n");
-        const first = lines.trim();
+        const first = lines[0].trim(); // FIX: was lines.trim() — arrays have no .trim()
         const match = first.match(/tosver\s*=\s*(\d+)/i);
         if (match) {
-            tosVersionRemote = match;
+            tosVersionRemote = match[1]; // FIX: was match (full array) instead of capture group
             tosContent = lines.slice(1).join("\n");
         } else {
             tosVersionRemote = "1";
-            tosContent = text; 
+            tosContent = text;
         }
     } catch {
         tosVersionRemote = "1";
@@ -161,8 +159,9 @@ async function handle(input) {
     historyIndex = history.length;
 
     const parts = raw.split(" ");
-    const cmd = parts.toLowerCase();
-    let args = parts.slice(1).join(" ");
+    const cmd = parts[0].toLowerCase(); // FIX: was parts.toLowerCase() — arrays have no .toLowerCase()
+    const subCmd = parts[1] ? parts[1].toLowerCase() : ""; // FIX: extracted separately from args
+    const args = parts.slice(2).join(" "); // FIX: args is everything after subCmd
 
     // BULLETPROOF TOS GUARD
     if (!tosValid() && cmd !== "tos" && cmd !== "accept") {
@@ -190,7 +189,7 @@ async function handle(input) {
     // Handle Custom Installed Commands
     if (isCustom && !isBuiltIn) {
         try {
-            window.customCommands[cmd](args);
+            window.customCommands[cmd](parts.slice(1).join(" "));
         } catch (e) {
             print(`Plugin Command Error: ${e.message}`);
         }
@@ -205,14 +204,13 @@ async function handle(input) {
             break;
 
         case 'plugin':
-            let subCmd = parts;
             let pluginUrls = JSON.parse(getStorage("plugins") || "[]");
-            
-            if (subCmd === "add" && parts) {
-                if (!pluginUrls.includes(parts)) {
-                    pluginUrls.push(parts);
+
+            if (subCmd === "add" && args) { // FIX: was parts[1]/parts[2], now uses subCmd/args
+                if (!pluginUrls.includes(args)) {
+                    pluginUrls.push(args);
                     setStorage("plugins", JSON.stringify(pluginUrls));
-                    print(`Added plugin: ${parts}. Type 'installer' to apply or restart terminal.`);
+                    print(`Added plugin: ${args}. Type 'installer' to apply or restart terminal.`);
                 } else {
                     print("Plugin already installed.");
                 }
@@ -222,8 +220,8 @@ async function handle(input) {
                 if (pluginUrls.length === 0) print(" - None installed.");
                 pluginUrls.forEach((url, i) => print(` [${i}] ${url}`));
                 print("<hr>", true);
-            } else if (subCmd === "remove" && parts !== undefined) {
-                let idx = parseInt(parts);
+            } else if (subCmd === "remove" && args !== undefined) { // FIX: was parts[2]
+                let idx = parseInt(args);
                 if (!isNaN(idx) && idx >= 0 && idx < pluginUrls.length) {
                     let removed = pluginUrls.splice(idx, 1);
                     setStorage("plugins", JSON.stringify(pluginUrls));
@@ -242,8 +240,8 @@ async function handle(input) {
             break;
 
         case 'js':
-            if (parts === 'activate') {
-                jsPendingPerm = parts === '-p';
+            if (subCmd === 'activate') { // FIX: was parts === 'activate' — comparing array to string
+                jsPendingPerm = parts[2] === '-p';
                 print("<hr>", true);
                 print("<span class='danger-text'>!! SECURITY WARNING !!</span>", true);
                 print("<span class='warning-text'>Enabling JavaScript execution allows the terminal to run any code you type.</span>", true);
@@ -253,14 +251,14 @@ async function handle(input) {
                 awaitingJsConfirm = true;
                 return;
             }
-            if (parts === 'deactivate') {
+            if (subCmd === 'deactivate') { // FIX: same — was parts === 'deactivate'
                 jsActive = false;
                 setStorage("js_enabled", "false");
                 return print("JS Terminal deactivated.");
             }
             if (!jsActive) return print("JS Terminal is not active. Type 'js activate' to begin.");
             try {
-                const result = eval(args);
+                const result = eval(parts.slice(1).join(" "));
                 if (result !== undefined) print(result);
             } catch (e) {
                 print(`Runtime Error: ${e.message}`);
@@ -300,7 +298,7 @@ async function handle(input) {
             print("<hr>", true);
             print("--- Built-in Commands ---");
             for (let c in commands) print(`<span class="cmd">${c}</span>: ${commands[c]}`, true);
-            
+
             if (Object.keys(window.customHelp).length > 0) {
                 print("\n--- Plugin Commands ---");
                 for (let c in window.customHelp) print(`<span class="cmd">${c}</span>: ${window.customHelp[c]}`, true);
@@ -357,7 +355,7 @@ function loadPlugins() {
 (async () => {
     await loadTOS();
     print(VERSION_STRING);
-    
+
     if (getStorage("js_enabled") === "true") {
         jsActive = true;
         print("[JS TERMINAL ACTIVE]");
