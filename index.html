@@ -31,7 +31,7 @@
 if (localStorage.getItem("run_installer") === "true") {
     localStorage.removeItem("run_installer");
 
-    fetch("https://raw.githubusercontent.com/padale323/Norepinephrine-Installer/refs/heads/main/Plugin.js")
+    fetch("https://raw.githubusercontent.com/padale323/Norepinephrine-Installer/refs/heads/main/Installer.js")
         .then(r => {
             if (!r.ok) throw new Error(`Failed to fetch installer: ${r.status}`);
             return r.text();
