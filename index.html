@@ -111,6 +111,7 @@ const commands = {
     "accept": "Accept current Terms of Service.",
     "stats": "View terminal network usage and current users.",
     "reboot": "Reloads Norepinephrine.",
+    "reinstall": "Wipe all local data and reload fresh.",
     "clear": "Clear screen.",
     "help": "Show this menu."
 };
@@ -203,12 +204,13 @@ async function handle(input) {
 
         case 'changelog':
             print("<hr>", true);
-            print("Beta 5 Changes:");
+            print("Beta 5.1 Changes:");
             print(" - Added ASCII splash banner.");
             print(" - Added reboot command.");
             print(" - Added analytics / stats system.");
             print(" - Plugins now load via fetch+eval (no MIME issues).");
             print(" - Installer falls back to terminal on error.");
+            print(" - Added reinstall command.");
             print(" - Removed JS terminal and redirect-console.");
             print("<hr>", true);
             break;
@@ -252,6 +254,13 @@ async function handle(input) {
 
         case 'clear':
             out.innerHTML = "";
+            break;
+
+        case 'reinstall':
+            print("Clearing all local data...");
+            localStorage.clear();
+            print("Done. Rebooting...");
+            setTimeout(() => window.location.reload(), 800);
             break;
 
         default:
