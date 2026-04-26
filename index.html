@@ -117,6 +117,7 @@ const commands = {
     "accept": "Accept current Terms of Service.",
     "clear": "Clear screen.",
     "help": "Show this menu."
+    "reboot": "Reloads Norepinephrine"
 };
 
 async function handle(input) {
@@ -252,6 +253,11 @@ async function handle(input) {
             } catch (e) {
                 print(`Runtime Error: ${e.message}`);
             }
+            break;
+
+        case 'reboot':
+            print("Rebooting...");
+            setTimeout(() => window.location.reload(), 500);
             break;
 
         case 'version':
