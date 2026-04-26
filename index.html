@@ -13,6 +13,7 @@
         .cmd { color: #d2a8ff; font-weight: bold; }
         .warning-text { color: var(--warn); }
         .danger-text { color: var(--danger); font-weight: bold; }
+        .dim { color: var(--dim); }
         hr { border: 0; border-top: 1px solid #21262d; margin: 10px 0; }
     </style>
 </head>
@@ -42,15 +43,8 @@ const VERSION_STRING = `
  ##   ###  "##mm##"   ##       "##mmmm#  ###mm##"  mmm##mmm  ##    ##  "##mmmm#  ###mm##"  ##    ##   ##       mmm##mmm  ##    ##  "##mmmm# 
  ""   """    """"     ""         """""   ## """    """"""""  ""    ""    """""   ## """    ""    ""   ""       """"""""  ""    ""    """""  
                                          ##                                      ##                                                         
-                                         
                                      > Beta 5 <
 `;
-
-// JS Terminal State
-let jsActive = false;
-let awaitingJsConfirm = false;
-let jsPendingPerm = false;
-let consoleRedirected = false;
 
 let tosVersionRemote = null;
 let tosContent = "";
@@ -82,24 +76,16 @@ const print = (t, html = false) => {
     out.scrollTop = out.scrollHeight;
 };
 
-const originalLog = console.log;
-console.log = (...args) => {
-    originalLog(...args);
-    if (consoleRedirected || jsActive) {
-        args.forEach(arg => print(arg));
-    }
-};
-
 async function loadTOS() {
     try {
         const r = await fetch("https://raw.githubusercontent.com/Norepinephrine-Tools/Terms/refs/heads/main/TOS.txt");
         if (!r.ok) throw new Error("Network response failed");
         const text = await r.text();
         const lines = text.split("\n");
-        const first = lines.trim();
+        const first = lines[0].trim();
         const match = first.match(/tosver\s*=\s*(\d+)/i);
         if (match) {
-            tosVersionRemote = match;
+            tosVersionRemote = match[1];
             tosContent = lines.slice(1).join("\n");
         } else {
             tosVersionRemote = "1";
@@ -119,50 +105,27 @@ function tosValid() {
 const commands = {
     "installer": "Launch the visual plugin installer.",
     "plugin": "Manage plugins manually (add <url>, list, remove <index>).",
-    "js activate": "Enable terminal JavaScript execution.",
-    "js deactivate": "Disable terminal JavaScript execution.",
-    "redirect-console": "Toggle console.log redirection to terminal.",
     "version": "Show current version info.",
     "changelog": "Show recent updates.",
     "tos": "Display Terms of Service.",
     "accept": "Accept current Terms of Service.",
     "stats": "View terminal network usage and current users.",
+    "reboot": "Reloads Norepinephrine.",
     "clear": "Clear screen.",
-    "help": "Show this menu.",
-    "reboot": "Reloads Norepinephrine."
+    "help": "Show this menu."
 };
 
 async function handle(input) {
     const raw = input.trim();
     if (!raw) return;
 
-    if (awaitingJsConfirm) {
-        print(`\n> ${raw}`);
-        const choice = raw.toLowerCase();
-        if (choice === 'y') {
-            jsActive = true;
-            if (jsPendingPerm) {
-                setStorage("js_enabled", "true");
-                print("JS Terminal Activated PERMANENTLY.");
-            } else {
-                print("JS Terminal Activated for this session.");
-            }
-            print("Terminal now supports direct JS. console.log() is redirected here.");
-        } else {
-            print("Activation aborted.");
-        }
-        awaitingJsConfirm = false;
-        jsPendingPerm = false;
-        return;
-    }
-
     print(`\n> ${raw}`);
     history.push(raw);
     historyIndex = history.length;
 
     const parts = raw.split(" ");
-    const cmd = parts.toLowerCase();
-    const subCmd = parts ? parts.toLowerCase() : "";
+    const cmd = parts[0].toLowerCase();
+    const subCmd = parts[1] ? parts[1].toLowerCase() : "";
     const args = parts.slice(2).join(" ");
 
     // BULLETPROOF TOS GUARD
@@ -175,18 +138,8 @@ async function handle(input) {
         }
     }
 
-    const isBuiltIn = commands.hasOwnProperty(cmd) || cmd === "js" || cmd === "installer" || cmd === "plugin";
+    const isBuiltIn = commands.hasOwnProperty(cmd) || cmd === "installer" || cmd === "plugin";
     const isCustom = window.customCommands.hasOwnProperty(cmd);
-
-    if (!isBuiltIn && !isCustom && jsActive) {
-        try {
-            const result = eval(raw);
-            if (result !== undefined) print(result);
-            return;
-        } catch (e) {
-            return print(`JS Error: ${e.message}`);
-        }
-    }
 
     // Handle Custom Installed Commands
     if (isCustom && !isBuiltIn) {
@@ -236,37 +189,6 @@ async function handle(input) {
             }
             break;
 
-        case 'redirect-console':
-            consoleRedirected = !consoleRedirected;
-            print(`Console redirection is now ${consoleRedirected ? 'ENABLED' : 'DISABLED'}.`);
-            break;
-
-        case 'js':
-            if (subCmd === 'activate') {
-                jsPendingPerm = parts === '-p';
-                print("<hr>", true);
-                print("<span class='danger-text'>!! SECURITY WARNING !!</span>", true);
-                print("<span class='warning-text'>Enabling JavaScript execution allows the terminal to run any code you type.</span>", true);
-                print("<span class='warning-text'>NEVER paste commands or scripts from people you do not trust.</span>", true);
-                print("Nothing is Norepinephrine's fault for what you do with JS.");
-                print("Confirm activation? (y/n)");
-                awaitingJsConfirm = true;
-                return;
-            }
-            if (subCmd === 'deactivate') {
-                jsActive = false;
-                setStorage("js_enabled", "false");
-                return print("JS Terminal deactivated.");
-            }
-            if (!jsActive) return print("JS Terminal is not active. Type 'js activate' to begin.");
-            try {
-                const result = eval(parts.slice(1).join(" "));
-                if (result !== undefined) print(result);
-            } catch (e) {
-                print(`Runtime Error: ${e.message}`);
-            }
-            break;
-
         case 'reboot':
             print("Rebooting...");
             setTimeout(() => window.location.reload(), 500);
@@ -275,16 +197,19 @@ async function handle(input) {
         case 'version':
             print("<hr>", true);
             print(VERSION_STRING);
-            print("Status: Stable Beta");
+            print("Status: Beta");
             print("<hr>", true);
             break;
 
         case 'changelog':
             print("<hr>", true);
-            print("Beta 4 Changes:");
-            print(" - Added visual Plugin Installer system.");
-            print(" - Added dynamic custom commands architecture.");
-            print(" - Stripped deprecated commands.");
+            print("Beta 5 Changes:");
+            print(" - Added ASCII splash banner.");
+            print(" - Added reboot command.");
+            print(" - Added analytics / stats system.");
+            print(" - Plugins now load via fetch+eval (no MIME issues).");
+            print(" - Installer falls back to terminal on error.");
+            print(" - Removed JS terminal and redirect-console.");
             print("<hr>", true);
             break;
 
@@ -305,8 +230,8 @@ async function handle(input) {
             if (window.currentStats) {
                 print("<hr>", true);
                 print(`Total Unique Terminals: <span class="cmd">${window.currentStats.total}</span>`, true);
-                print(`Active Connections:   <span class="cmd">${window.currentStats.active}</span>`, true);
-                print(`Local HWID:           <span class="dim">${hwid}</span>`, true);
+                print(`Active Connections:     <span class="cmd">${window.currentStats.active}</span>`, true);
+                print(`Local HWID:             <span class="dim">${hwid}</span>`, true);
                 print("<hr>", true);
             } else {
                 print("Establishing link to analytics server... try again in a moment.");
@@ -365,7 +290,7 @@ document.addEventListener("click", () => {
 // ==========================================
 async function loadPluginFromUrl(url) {
     try {
-        const r = await fetch(url);
+        const r = await fetch(url + "?t=" + Date.now());
         if (!r.ok) throw new Error(`Server returned ${r.status}`);
         const code = await r.text();
         new Function(code)();
@@ -385,29 +310,23 @@ async function loadPlugins() {
 // ==========================================
 // ANALYTICS & HWID ENGINE
 // ==========================================
-// PASTE YOUR DEPLOYED GOOGLE APPS SCRIPT URL HERE:
-const GAS_URL = "YOUR_GOOGLE_WEB_APP_URL"; 
+const GAS_URL = "https://script.google.com/macros/s/AKfycbyLBX12a8CCJ_Qevw_wFBTNaGuUOzzpjemh7twIBdzsmmLy3thQEx2aQecTBwVFn0ZDVg/exec";
 
 let hwid = getStorage("terminal_hwid");
 let isNewVisitor = false;
 
 if (!hwid) {
-    // Generate UUID if one doesn't exist
     hwid = 'ID-' + Math.random().toString(36).substr(2, 9) + '-' + Date.now();
     setStorage("terminal_hwid", hwid);
-    isNewVisitor = true; // Flag for the server to increment the global counter
+    isNewVisitor = true;
 }
 
 async function syncAnalytics() {
-    if (GAS_URL === "https://script.google.com/macros/s/AKfycbyLBX12a8CCJ_Qevw_wFBTNaGuUOzzpjemh7twIBdzsmmLy3thQEx2aQecTBwVFn0ZDVg/exec") return null; // Safety exit if not setup
-    
     try {
         const response = await fetch(`${GAS_URL}?hwid=${hwid}&isNew=${isNewVisitor}`);
         const data = await response.json();
         window.currentStats = data;
-        
-        // Once successfully sent, they are no longer "new"
-        isNewVisitor = false; 
+        isNewVisitor = false;
         return data;
     } catch (e) {
         console.error("Analytics Sync Failed", e);
@@ -415,7 +334,6 @@ async function syncAnalytics() {
     }
 }
 
-// Ping every 60 seconds after the initial boot sync
 setInterval(syncAnalytics, 60000);
 
 // ==========================================
@@ -425,23 +343,15 @@ async function _bootTerminal() {
     await loadTOS();
     print(VERSION_STRING);
 
-    // FETCH AND DISPLAY STATS ON BOOT
     print("<span class='dim'>Establishing secure network link...</span>", true);
     const initialStats = await syncAnalytics();
-    
+
     if (initialStats) {
-        // Clear the "Establishing link..." message by replacing it or just printing below it.
-        // Since we are appending, we will just print the success.
         print(`[Network] Active Terminals: <span class="cmd">${initialStats.active}</span> | Total Visits: <span class="cmd">${initialStats.total}</span>`, true);
     } else {
-        print(`<span class="warn">[Network] Offline or Unconfigured.</span>`, true);
+        print(`<span class="warning-text">[Network] Offline or Unconfigured.</span>`, true);
     }
     print("<hr>", true);
-
-    if (getStorage("js_enabled") === "true") {
-        jsActive = true;
-        print("[JS TERMINAL ACTIVE]");
-    }
 
     await loadPlugins();
 
@@ -460,7 +370,7 @@ const _installerPending = localStorage.getItem("run_installer") === "true";
 
 if (_installerPending) {
     localStorage.removeItem("run_installer");
-    fetch("https://raw.githubusercontent.com/padale323/Norepinephrine-Installer/refs/heads/main/Installer.js")
+    fetch("https://raw.githubusercontent.com/padale323/Norepinephrine-Installer/refs/heads/main/Installer.js?t=" + Date.now())
         .then(r => {
             if (!r.ok) throw new Error(`Server returned ${r.status}`);
             return r.text();
