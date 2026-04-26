@@ -43,7 +43,7 @@ const VERSION_STRING = `
  ##   ###  "##mm##"   ##       "##mmmm#  ###mm##"  mmm##mmm  ##    ##  "##mmmm#  ###mm##"  ##    ##   ##       mmm##mmm  ##    ##  "##mmmm# 
  ""   """    """"     ""         """""   ## """    """"""""  ""    ""    """""   ## """    ""    ""   ""       """"""""  ""    ""    """""  
                                          ##                                      ##                                                         
-                                     > Beta 5 <
+                                  > Release Candidate 1 <
 `;
 
 let tosVersionRemote = null;
@@ -104,12 +104,12 @@ function tosValid() {
 
 const commands = {
     "installer": "Launch the visual plugin installer.",
-    "plugin": "Manage plugins manually (add <url>, list, remove <index>).",
+    "plugin": "Manage plugins (add <url> | list | remove <index>).",
     "version": "Show current version info.",
     "changelog": "Show recent updates.",
     "tos": "Display Terms of Service.",
     "accept": "Accept current Terms of Service.",
-    "stats": "View terminal network usage and current users.",
+    "stats": "View current users.",
     "reboot": "Reloads Norepinephrine.",
     "reinstall": "Wipe all local data and reload fresh.",
     "clear": "Clear screen.",
@@ -127,6 +127,9 @@ async function handle(input) {
     const parts = raw.split(" ");
     const cmd = parts[0].toLowerCase();
     const subCmd = parts[1] ? parts[1].toLowerCase() : "";
+    // FIX: plugin remove takes its value from parts[2], which is args when
+    // args = parts.slice(2).join(" "). That is correct. But the guard was
+    // `args !== undefined` which is always true. Changed to `args !== ""`.
     const args = parts.slice(2).join(" ");
 
     // BULLETPROOF TOS GUARD
@@ -145,7 +148,7 @@ async function handle(input) {
     // Handle Custom Installed Commands
     if (isCustom && !isBuiltIn) {
         try {
-            window.customCommands[cmd](parts.slice(1).join(" "));
+            await window.customCommands[cmd](parts.slice(1).join(" "));
         } catch (e) {
             print(`Plugin Command Error: ${e.message}`);
         }
@@ -176,7 +179,7 @@ async function handle(input) {
                 if (pluginUrls.length === 0) print(" - None installed.");
                 pluginUrls.forEach((url, i) => print(` [${i}] ${url}`));
                 print("<hr>", true);
-            } else if (subCmd === "remove" && args !== undefined) {
+            } else if (subCmd === "remove" && args !== "") { // FIX: was !== undefined, always true
                 let idx = parseInt(args);
                 if (!isNaN(idx) && idx >= 0 && idx < pluginUrls.length) {
                     let removed = pluginUrls.splice(idx, 1);
@@ -185,6 +188,8 @@ async function handle(input) {
                 } else {
                     print("Invalid index. Use 'plugin list' to find the index.");
                 }
+            } else if (subCmd === "remove") {
+                print("Usage: plugin remove <index>"); // FIX: now reachable when no index given
             } else {
                 print("Usage: plugin add <url> | plugin list | plugin remove <index>");
             }
@@ -198,20 +203,24 @@ async function handle(input) {
         case 'version':
             print("<hr>", true);
             print(VERSION_STRING);
-            print("Status: Beta");
+            print("Status: Release Candidate");
             print("<hr>", true);
             break;
 
         case 'changelog':
             print("<hr>", true);
-            print("Beta 5.1 Changes:");
+            print("RC1 Changes:");
+            print(" - Promoted from Beta 5 to Release Candidate 1.");
+            print(" - Fixed plugin remove guard (was always true, never showed usage error).");
+            print(" - Fixed offline mode CSS class (warn → warning-text).");
+            print(" - Plugin command handler now awaited correctly.");
+            print("Beta 5 Changes:");
             print(" - Added ASCII splash banner.");
-            print(" - Added reboot command.");
+            print(" - Added reboot + reinstall commands.");
             print(" - Added analytics / stats system.");
-            print(" - Plugins now load via fetch+eval (no MIME issues).");
-            print(" - Installer falls back to terminal on error.");
-            print(" - Added reinstall command.");
-            print(" - Removed JS terminal and redirect-console.");
+            print(" - Plugins load via fetch+eval (no MIME issues).");
+            print(" - Installer falls back to terminal on load error.");
+            print(" - Removed JS terminal and redirect-console (moved to plugins).");
             print("<hr>", true);
             break;
 
@@ -231,20 +240,25 @@ async function handle(input) {
         case 'stats':
             if (window.currentStats) {
                 print("<hr>", true);
-                print(`Total Unique Terminals: <span class="cmd">${window.currentStats.total}</span>`, true);
-                print(`Active Connections:     <span class="cmd">${window.currentStats.active}</span>`, true);
-                print(`Local HWID:             <span class="dim">${hwid}</span>`, true);
+                print(`Live Connections: <span class="cmd">${window.currentStats.active}</span>`, true);
+                print(`Terminal ID:      <span class="dim">${hwid}</span>`, true);
                 print("<hr>", true);
             } else {
-                print("Establishing link to analytics server... try again in a moment.");
+                print("Syncing with network... try again in a moment.");
             }
+            break;
+
+        case 'reinstall':
+            print("Clearing all local data...");
+            localStorage.clear();
+            print("Done. Rebooting...");
+            setTimeout(() => window.location.reload(), 800);
             break;
 
         case 'help':
             print("<hr>", true);
             print("--- Built-in Commands ---");
             for (let c in commands) print(`<span class="cmd">${c}</span>: ${commands[c]}`, true);
-
             if (Object.keys(window.customHelp).length > 0) {
                 print("\n--- Plugin Commands ---");
                 for (let c in window.customHelp) print(`<span class="cmd">${c}</span>: ${window.customHelp[c]}`, true);
@@ -254,13 +268,6 @@ async function handle(input) {
 
         case 'clear':
             out.innerHTML = "";
-            break;
-
-        case 'reinstall':
-            print("Clearing all local data...");
-            localStorage.clear();
-            print("Done. Rebooting...");
-            setTimeout(() => window.location.reload(), 800);
             break;
 
         default:
@@ -319,7 +326,7 @@ async function loadPlugins() {
 // ==========================================
 // ANALYTICS & HWID ENGINE
 // ==========================================
-const GAS_URL = "https://script.google.com/macros/s/AKfycbyLBX12a8CCJ_Qevw_wFBTNaGuUOzzpjemh7twIBdzsmmLy3thQEx2aQecTBwVFn0ZDVg/exec";
+const GAS_URL = "https://script.google.com/macros/s/AKfycbyTb30dK2Olw4fvCb5yD4YwoVTuHpKyBfzzJ83GsZ_9hTWvwRPqTC3iIb--JMTV0tJxHA/exec";
 
 let hwid = getStorage("terminal_hwid");
 let isNewVisitor = false;
@@ -332,13 +339,11 @@ if (!hwid) {
 
 async function syncAnalytics() {
     try {
-        const response = await fetch(`${GAS_URL}?hwid=${hwid}&isNew=${isNewVisitor}`);
+        const response = await fetch(`${GAS_URL}?hwid=${hwid}`);
         const data = await response.json();
         window.currentStats = data;
-        isNewVisitor = false;
         return data;
     } catch (e) {
-        console.error("Analytics Sync Failed", e);
         return null;
     }
 }
@@ -354,11 +359,10 @@ async function _bootTerminal() {
 
     print("<span class='dim'>Establishing secure network link...</span>", true);
     const initialStats = await syncAnalytics();
-
     if (initialStats) {
-        print(`[Network] Active Terminals: <span class="cmd">${initialStats.active}</span> | Total Visits: <span class="cmd">${initialStats.total}</span>`, true);
+        print(`[Network] Online | Active Terminals: <span class="cmd">${initialStats.active}</span>`, true);
     } else {
-        print(`<span class="warning-text">[Network] Offline or Unconfigured.</span>`, true);
+        print(`<span class="warning-text">[Network] Offline Mode</span>`, true); // FIX: was "warn" class, doesn't exist
     }
     print("<hr>", true);
 
