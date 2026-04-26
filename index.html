@@ -33,7 +33,18 @@ const tin = document.getElementById("tIn");
 let history = [];
 let historyIndex = -1;
 
-const VERSION_STRING = "Norepinephrine [Beta 4]";
+const VERSION_STRING = `
+ mmm   mm                                             ##                                   mm                     ##                        
+ ###   ##                                             ""                                   ##                     ""                        
+ ##"#  ##   m####m    ##m####   m####m   ##m###m    ####     ##m####m   m####m   ##m###m   ##m####m   ##m####   ####     ##m####m   m####m  
+ ## ## ##  ##"  "##   ##"      ##mmmm##  ##"  "##     ##     ##"   ##  ##mmmm##  ##"  "##  ##"   ##   ##"         ##     ##"   ##  ##mmmm## 
+ ##  #m##  ##    ##   ##       ##""""""  ##    ##     ##     ##    ##  ##""""""  ##    ##  ##    ##   ##          ##     ##    ##  ##"""""" 
+ ##   ###  "##mm##"   ##       "##mmmm#  ###mm##"  mmm##mmm  ##    ##  "##mmmm#  ###mm##"  ##    ##   ##       mmm##mmm  ##    ##  "##mmmm# 
+ ""   """    """"     ""         """""   ## """    """"""""  ""    ""    """""   ## """    ""    ""   ""       """"""""  ""    ""    """""  
+                                         ##                                      ##                                                         
+                                         
+                                     > Beta 5 <
+`;
 
 // JS Terminal State
 let jsActive = false;
@@ -85,10 +96,10 @@ async function loadTOS() {
         if (!r.ok) throw new Error("Network response failed");
         const text = await r.text();
         const lines = text.split("\n");
-        const first = lines[0].trim();
+        const first = lines.trim();
         const match = first.match(/tosver\s*=\s*(\d+)/i);
         if (match) {
-            tosVersionRemote = match[1];
+            tosVersionRemote = match;
             tosContent = lines.slice(1).join("\n");
         } else {
             tosVersionRemote = "1";
@@ -115,6 +126,7 @@ const commands = {
     "changelog": "Show recent updates.",
     "tos": "Display Terms of Service.",
     "accept": "Accept current Terms of Service.",
+    "stats": "View terminal network usage and current users.",
     "clear": "Clear screen.",
     "help": "Show this menu.",
     "reboot": "Reloads Norepinephrine."
@@ -149,8 +161,8 @@ async function handle(input) {
     historyIndex = history.length;
 
     const parts = raw.split(" ");
-    const cmd = parts[0].toLowerCase();
-    const subCmd = parts[1] ? parts[1].toLowerCase() : "";
+    const cmd = parts.toLowerCase();
+    const subCmd = parts ? parts.toLowerCase() : "";
     const args = parts.slice(2).join(" ");
 
     // BULLETPROOF TOS GUARD
@@ -231,7 +243,7 @@ async function handle(input) {
 
         case 'js':
             if (subCmd === 'activate') {
-                jsPendingPerm = parts[2] === '-p';
+                jsPendingPerm = parts === '-p';
                 print("<hr>", true);
                 print("<span class='danger-text'>!! SECURITY WARNING !!</span>", true);
                 print("<span class='warning-text'>Enabling JavaScript execution allows the terminal to run any code you type.</span>", true);
@@ -287,6 +299,18 @@ async function handle(input) {
             setStorage("tosver", tosVersionRemote);
             tosAcceptedVersion = tosVersionRemote;
             print("TOS accepted. You may now use the terminal.");
+            break;
+
+        case 'stats':
+            if (window.currentStats) {
+                print("<hr>", true);
+                print(`Total Unique Terminals: <span class="cmd">${window.currentStats.total}</span>`, true);
+                print(`Active Connections:   <span class="cmd">${window.currentStats.active}</span>`, true);
+                print(`Local HWID:           <span class="dim">${hwid}</span>`, true);
+                print("<hr>", true);
+            } else {
+                print("Establishing link to analytics server... try again in a moment.");
+            }
             break;
 
         case 'help':
@@ -359,11 +383,60 @@ async function loadPlugins() {
 }
 
 // ==========================================
+// ANALYTICS & HWID ENGINE
+// ==========================================
+// PASTE YOUR DEPLOYED GOOGLE APPS SCRIPT URL HERE:
+const GAS_URL = "YOUR_GOOGLE_WEB_APP_URL"; 
+
+let hwid = getStorage("terminal_hwid");
+let isNewVisitor = false;
+
+if (!hwid) {
+    // Generate UUID if one doesn't exist
+    hwid = 'ID-' + Math.random().toString(36).substr(2, 9) + '-' + Date.now();
+    setStorage("terminal_hwid", hwid);
+    isNewVisitor = true; // Flag for the server to increment the global counter
+}
+
+async function syncAnalytics() {
+    if (GAS_URL === "https://script.google.com/macros/s/AKfycbyLBX12a8CCJ_Qevw_wFBTNaGuUOzzpjemh7twIBdzsmmLy3thQEx2aQecTBwVFn0ZDVg/exec") return null; // Safety exit if not setup
+    
+    try {
+        const response = await fetch(`${GAS_URL}?hwid=${hwid}&isNew=${isNewVisitor}`);
+        const data = await response.json();
+        window.currentStats = data;
+        
+        // Once successfully sent, they are no longer "new"
+        isNewVisitor = false; 
+        return data;
+    } catch (e) {
+        console.error("Analytics Sync Failed", e);
+        return null;
+    }
+}
+
+// Ping every 60 seconds after the initial boot sync
+setInterval(syncAnalytics, 60000);
+
+// ==========================================
 // BOOT SEQUENCE
 // ==========================================
 async function _bootTerminal() {
     await loadTOS();
     print(VERSION_STRING);
+
+    // FETCH AND DISPLAY STATS ON BOOT
+    print("<span class='dim'>Establishing secure network link...</span>", true);
+    const initialStats = await syncAnalytics();
+    
+    if (initialStats) {
+        // Clear the "Establishing link..." message by replacing it or just printing below it.
+        // Since we are appending, we will just print the success.
+        print(`[Network] Active Terminals: <span class="cmd">${initialStats.active}</span> | Total Visits: <span class="cmd">${initialStats.total}</span>`, true);
+    } else {
+        print(`<span class="warn">[Network] Offline or Unconfigured.</span>`, true);
+    }
+    print("<hr>", true);
 
     if (getStorage("js_enabled") === "true") {
         jsActive = true;
