@@ -2,7 +2,7 @@
 
 A lightweight, hackable browser terminal with a plugin system. Built as a single HTML file, hosted on GitHub Pages.
 
-> **Current version:** Beta 6
+> **Current version:** Beta 5
 
 ---
 
@@ -85,19 +85,6 @@ Plugins take effect on the next reboot. Use `reboot` after adding or removing.
 ### Official plugins
 
 Official plugins are available through the visual installer (`installer` command) or from the [Norepinephrine-Installer](https://github.com/padale323/Norepinephrine-Installer) repository.
-
-| Plugin | Description |
-|---|---|
-| IP | Show your public IP address |
-| Dictionary | Look up word definitions |
-| Wiki | Search Wikipedia summaries |
-| Echo | Print text to the terminal |
-| Math | Evaluate math expressions |
-| JS | Execute JavaScript in the terminal |
-| Console Redirect | Redirect console output to the terminal |
-| Norepinefiles | Virtual filesystem with folders and executable scripts |
-| Norepinealias | Persistent command aliases |
-| Theme | Switch terminal color themes |
 
 ---
 
