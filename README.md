@@ -30,9 +30,6 @@ To boot into Safe Mode (skips all plugins):
 ```
 https://padale323.github.io/Norepinephrine?safe
 ```
-
-Or spam `S` 5 times before the terminal finishes booting.
-
 ---
 
 ## Built-in Commands
@@ -94,7 +91,6 @@ Safe Mode skips all plugin loading on boot. Use it to recover if a plugin is bre
 
 **How to enter Safe Mode:**
 - Add `?safe` to the URL
-- Spam `S` 5 times before boot completes (only works if plugins are installed)
 - Run the `safemode` command
 
 **While in Safe Mode:**
