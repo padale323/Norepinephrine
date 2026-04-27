@@ -2,7 +2,7 @@
 
 A lightweight, hackable browser terminal with a plugin system. Built as a single HTML file, hosted on GitHub Pages.
 
-> **Current version:** Beta 5
+> **Current version:** Beta 6
 
 ---
 
