@@ -60,15 +60,13 @@ let history = [];
 let historyIndex = -1;
 
 const VERSION_STRING = `
- mmm   mm                                             ##                                   mm                     ##                        
- ###   ##                                             ""                                   ##                     ""                        
- ##"#  ##   m####m    ##m####   m####m   ##m###m    ####     ##m####m   m####m   ##m###m   ##m####m   ##m####   ####     ##m####m   m####m  
- ## ## ##  ##"  "##   ##"      ##mmmm##  ##"  "##     ##     ##"   ##  ##mmmm##  ##"  "##  ##"   ##   ##"         ##     ##"   ##  ##mmmm## 
- ##  #m##  ##    ##   ##       ##""""""  ##    ##     ##     ##    ##  ##""""""  ##    ##  ##    ##   ##          ##     ##    ##  ##"""""" 
- ##   ###  "##mm##"   ##       "##mmmm#  ###mm##"  mmm##mmm  ##    ##  "##mmmm#  ###mm##"  ##    ##   ##       mmm##mmm  ##    ##  "##mmmm# 
- ""   """    """"     ""         """""   ## """    """"""""  ""    ""    """""   ## """    ""    ""   ""       """"""""  ""    ""    """""  
-                                         ##                                      ##                                                         
-                                       > Beta 6 <
+███╗   ██╗ ██████╗ ██████╗ ███████╗██████╗ ██╗███╗   ██╗███████╗██████╗ ██╗  ██╗██████╗ ██╗███╗   ██╗███████╗
+████╗  ██║██╔═══██╗██╔══██╗██╔════╝██╔══██╗██║████╗  ██║██╔════╝██╔══██╗██║  ██║██╔══██╗██║████╗  ██║██╔════╝
+██╔██╗ ██║██║   ██║██████╔╝█████╗  ██████╔╝██║██╔██╗ ██║█████╗  ██████╔╝███████║██████╔╝██║██╔██╗ ██║█████╗  
+██║╚██╗██║██║   ██║██╔══██╗██╔══╝  ██╔═══╝ ██║██║╚██╗██║██╔══╝  ██╔═══╝ ██╔══██║██╔══██╗██║██║╚██╗██║██╔══╝  
+██║ ╚████║╚██████╔╝██║  ██║███████╗██║     ██║██║ ╚████║███████╗██║     ██║  ██║██║  ██║██║██║ ╚████║███████╗
+╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚══════╝                                                                                                          
+                                       > Release Canidate 2 <
 `;
 
 let tosVersionRemote = null;
@@ -294,32 +292,14 @@ async function handle(input) {
         case 'version':
             print("<hr>", true);
             print(VERSION_STRING);
-            print("Status: Beta");
+            print("Status: Release Canidate");
             print("<hr>", true);
             break;
 
         case 'changelog':
             print("<hr>", true);
-            print("Beta 6 Changes:");
-            print(" - Added Safe Mode (?safe URL, spam S on boot, or 'safemode' command).");
-            print(" - Plugin add now shows a security warning and requires confirmation.");
-            print(" - Plugin dependencies via // @requires <url> at top of plugin file.");
-            print(" - Dependencies load automatically and are deduplicated.");
-            print(" - plugin add previews required dependencies before confirmation.");
-            print(" - S-spam safe mode trigger only active if plugins are installed.");
-            print(" - In safe mode: plugins skipped, 'loadplugins' command available to resume.");
-            print(" - Live users online shown under banner.");
-            print("RC1 Changes:");
-            print(" - Fixed plugin remove index guard.");
-            print(" - Fixed offline mode CSS class.");
-            print(" - Plugin command handler now properly awaited.");
-            print("Beta 5 Changes:");
-            print(" - ASCII splash banner.");
-            print(" - reboot + reinstall commands.");
-            print(" - Analytics / stats system.");
-            print(" - Plugins load via fetch+eval (no MIME issues).");
-            print(" - Installer falls back to terminal on error.");
-            print("<hr>", true);
+            print("Release Canidate 2 Changes:");
+            print(" - changed ASCII splash).");
             break;
 
         case 'tos':
