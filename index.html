@@ -37,6 +37,7 @@ let _safeModeKeyWindow = null;
 if (_hasPlugins && !_safeMode) {
     const _safeModeKeyHandler = (e) => {
         if (e.key === "s" || e.key === "S") {
+            e.preventDefault(); // stop S appearing in the input box
             _safeModeKeyCount++;
             clearTimeout(_safeModeKeyWindow);
             _safeModeKeyWindow = setTimeout(() => { _safeModeKeyCount = 0; }, 1000);
@@ -455,13 +456,16 @@ if (!hwid) {
 
 async function syncAnalytics() {
     try {
-        const response = await fetch(`${GAS_URL}?hwid=${hwid}`);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        const response = await fetch(`${GAS_URL}?hwid=${hwid}`, { signal: controller.signal });
+        clearTimeout(timeout);
         const data = await response.json();
         window.currentStats = data;
-        // Keep the users online line updated live
         if (typeof data.active === "number") printUsersOnline(data.active);
         return data;
     } catch (e) {
+        printUsersOnline("?");
         return null;
     }
 }
@@ -487,11 +491,8 @@ async function _bootTerminal() {
 
     print("<hr>", true);
 
-    print("<span class='dim'>Establishing secure network link...</span>", true);
-    const initialStats = await syncAnalytics();
-    if (!initialStats) {
-        print(`<span class="warning-text">[Network] Offline Mode</span>`, true);
-    }
+    // Fire analytics without awaiting — users online updates when data arrives
+    syncAnalytics();
     print("<hr>", true);
 
     if (_safeMode) {
