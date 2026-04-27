@@ -34,23 +34,6 @@ let _safeMode = new URLSearchParams(window.location.search).has("safe");
 let _safeModeKeyCount = 0;
 let _safeModeKeyWindow = null;
 
-if (_hasPlugins && !_safeMode) {
-    const _safeModeKeyHandler = (e) => {
-        if (e.key === "s" || e.key === "S") {
-            e.preventDefault(); // stop S appearing in the input box
-            _safeModeKeyCount++;
-            clearTimeout(_safeModeKeyWindow);
-            _safeModeKeyWindow = setTimeout(() => { _safeModeKeyCount = 0; }, 1000);
-            if (_safeModeKeyCount >= 5) {
-                _safeMode = true;
-                document.removeEventListener("keydown", _safeModeKeyHandler);
-            }
-        }
-    };
-    document.addEventListener("keydown", _safeModeKeyHandler);
-    setTimeout(() => document.removeEventListener("keydown", _safeModeKeyHandler), 5000);
-}
-
 // ==========================================
 // MAIN TERMINAL LOGIC
 // ==========================================
