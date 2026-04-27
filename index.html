@@ -49,7 +49,7 @@ const VERSION_STRING = `
 ██║╚██╗██║██║   ██║██╔══██╗██╔══╝  ██╔═══╝ ██║██║╚██╗██║██╔══╝  ██╔═══╝ ██╔══██║██╔══██╗██║██║╚██╗██║██╔══╝  
 ██║ ╚████║╚██████╔╝██║  ██║███████╗██║     ██║██║ ╚████║███████╗██║     ██║  ██║██║  ██║██║██║ ╚████║███████╗
 ╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚══════╝                                                                                                          
-                                       > Release Canidate 2 <
+Release v1.0 Build 1
 `;
 
 let tosVersionRemote = null;
@@ -275,14 +275,25 @@ async function handle(input) {
         case 'version':
             print("<hr>", true);
             print(VERSION_STRING);
-            print("Status: Release Canidate");
+            print("Status: Stable");
             print("<hr>", true);
             break;
 
         case 'changelog':
             print("<hr>", true);
-            print("Release Canidate 2 Changes:");
-            print(" - changed ASCII splash).");
+            print("1.0 — Stable Release");
+            print(" - Norepinephrine is officially out of beta.");
+            print(" - Plugin system stable with install, remove, list, and dependency support.");
+            print(" - Safe Mode via ?safe URL or safemode command.");
+            print(" - Plugin add security warning with dependency preview.");
+            print(" - Users online shown live under banner.");
+            print(" - Analytics fire-and-forget with 10 second timeout.");
+            print(" - Cache busting on all plugin and installer fetches.");
+            print(" - Installer falls back to normal terminal on error.");
+            print(" - reinstall and reboot commands.");
+            print(" - TOS system with remote version checking.");
+            print(" - Full plugin API: registerCommand, customCommands, customHelp.");
+            print("<hr>", true);
             break;
 
         case 'tos':
