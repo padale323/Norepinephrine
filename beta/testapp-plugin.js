@@ -75,14 +75,14 @@
             </div>
 
             <script>
-                function testappLog(msg) {
+                window.testappLog = function(msg) {
                     const log = document.getElementById("testapp-log");
                     if (log) log.innerHTML += "> " + msg + "<br>";
                 }
 
-                function testappTryDouble() {
+                window.testappTryDouble = function() {
                     const result = window.NoreAPI.launchApp("<p>This should not appear.</p>");
-                    testappLog("Second launchApp returned: " + result + " (should be false)");
+                    window.testappLog("Second launchApp returned: " + result + " (should be false)");
                 }
             <\/script>
         `);
