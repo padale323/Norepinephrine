@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Norepinephrine</title>
+    <style>
+        :root { --glow: #ffffff; --bg: #0a0c10; --dim: #8b949e; --blue: #58a6ff; --warn: #ffcc00; --danger: #ff4444; }
+        body { margin: 0; background: var(--bg); color: var(--glow); font-family: 'Consolas', monospace; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+        #output { flex: 1; padding: 25px; overflow-y: auto; white-space: pre-wrap; font-size: 14px; line-height: 1.5; }
+        .input-row { display: flex; align-items: center; padding: 15px 25px; background: #000; border-top: 1px solid #21262d; }
+        #tIn { flex: 1; background: transparent; border: none; color: var(--glow); outline: none; font-family: inherit; font-size: 16px; margin-left: 10px; }
+        .prompt { color: var(--blue); font-weight: bold; }
+        .cmd { color: #d2a8ff; font-weight: bold; }
+        .warning-text { color: var(--warn); }
+        .danger-text { color: var(--danger); font-weight: bold; }
+        .dim { color: var(--dim); }
+        hr { border: 0; border-top: 1px solid #21262d; margin: 10px 0; }
+    </style>
+</head>
+<body>
+
+<div id="output"></div>
+<div class="input-row" id="input-container">
+    <span class="prompt">></span>
+    <input id="tIn" autocomplete="off" autofocus spellcheck="false">
+</div>
+
+<script>
+// ==========================================
+// SAFE MODE DETECTION
+// ==========================================
+const _hasPlugins = JSON.parse(localStorage.getItem("plugins") || "[]").length > 0;
+let _safeMode = new URLSearchParams(window.location.search).has("safe");
+let _safeModeKeyCount = 0;
+let _safeModeKeyWindow = null;
+
+// ==========================================
+// MAIN TERMINAL LOGIC
+// ==========================================
+const out = document.getElementById("output");
+const tin = document.getElementById("tIn");
+let history = [];
+let historyIndex = -1;
+
+const VERSION_STRING = `
+███╗   ██╗ ██████╗ ██████╗ ███████╗██████╗ ██╗███╗   ██╗███████╗██████╗ ██╗  ██╗██████╗ ██╗███╗   ██╗███████╗
+████╗  ██║██╔═══██╗██╔══██╗██╔════╝██╔══██╗██║████╗  ██║██╔════╝██╔══██╗██║  ██║██╔══██╗██║████╗  ██║██╔════╝
+██╔██╗ ██║██║   ██║██████╔╝█████╗  ██████╔╝██║██╔██╗ ██║█████╗  ██████╔╝███████║██████╔╝██║██╔██╗ ██║█████╗  
+██║╚██╗██║██║   ██║██╔══██╗██╔══╝  ██╔═══╝ ██║██║╚██╗██║██╔══╝  ██╔═══╝ ██╔══██║██╔══██╗██║██║╚██╗██║██╔══╝  
+██║ ╚████║╚██████╔╝██║  ██║███████╗██║     ██║██║ ╚████║███████╗██║     ██║  ██║██║  ██║██║██║ ╚████║███████╗
+╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚══════╝                                                                                                          
+Release v1.0 Build 1
+`;
+
+let tosVersionRemote = null;
+let tosContent = "";
+let tosAcceptedVersion = null;
+
+// Confirmation state
+let _awaitingConfirm = false;
+let _confirmCallback = null;
+
+// Plugin Storage Architecture
+window.customCommands = {};
+window.customHelp = {};
+
+window.registerCommand = function(cmdName, description, handlerFunction) {
+    window.customCommands[cmdName.toLowerCase()] = handlerFunction;
+    window.customHelp[cmdName.toLowerCase()] = description;
+};
+
+function setStorage(name, value) {
+    try { localStorage.setItem(name, value); } catch(e) {}
+}
+
+function getStorage(name) {
+    try { return localStorage.getItem(name); } catch(e) { return null; }
+}
+
+const print = (t, html = false) => {
+    const div = document.createElement("div");
+    if (t === undefined) return;
+    const textContent = typeof t === 'object' ? JSON.stringify(t, null, 2) : String(t);
+    html ? div.innerHTML = textContent : div.textContent = textContent;
+    out.appendChild(div);
+    out.scrollTop = out.scrollHeight;
+};
+
+// Live-updating users online line
+let _usersOnlineDiv = null;
+function printUsersOnline(count) {
+    if (!_usersOnlineDiv) {
+        _usersOnlineDiv = document.createElement("div");
+        out.appendChild(_usersOnlineDiv);
+    }
+    _usersOnlineDiv.innerHTML = `<span class="dim">${count} user${count === 1 ? "" : "s"} online</span>`;
+    out.scrollTop = out.scrollHeight;
+}
+
+async function loadTOS() {
+    try {
+        const r = await fetch("https://raw.githubusercontent.com/Norepinephrine-Tools/Terms/refs/heads/main/TOS.txt");
+        if (!r.ok) throw new Error("Network response failed");
+        const text = await r.text();
+        const lines = text.split("\n");
+        const first = lines[0].trim();
+        const match = first.match(/tosver\s*=\s*(\d+)/i);
+        if (match) {
+            tosVersionRemote = match[1];
+            tosContent = lines.slice(1).join("\n");
+        } else {
+            tosVersionRemote = "1";
+            tosContent = text;
+        }
+    } catch {
+        tosVersionRemote = "1";
+        tosContent = "Fallback TOS Loaded.\n1. Do not use this tool for malicious purposes.\n2. Standard terms apply.";
+    }
+    tosAcceptedVersion = getStorage("tosver");
+}
+
+function tosValid() {
+    return tosAcceptedVersion && tosVersionRemote && tosAcceptedVersion === tosVersionRemote;
+}
+
+const commands = {
+    "installer": "Launch the visual plugin installer.",
+    "plugin": "Manage plugins (add <url> | list | remove <index>).",
+    "safemode": "Reboot into safe mode (plugins skipped).",
+    "version": "Show current version info.",
+    "changelog": "Show recent updates.",
+    "tos": "Display Terms of Service.",
+    "accept": "Accept current Terms of Service.",
+    "stats": "View current users.",
+    "reboot": "Reloads Norepinephrine.",
+    "reinstall": "Wipe all local data and reload fresh.",
+    "clear": "Clear screen.",
+    "help": "Show this menu."
+};
+
+async function handle(input) {
+    const raw = input.trim();
+    if (!raw) return;
+
+    // Confirmation prompt handler
+    if (_awaitingConfirm) {
+        print(`\n> ${raw}`);
+        const choice = raw.toLowerCase();
+        if (choice === 'y') {
+            const cb = _confirmCallback;
+            _awaitingConfirm = false;
+            _confirmCallback = null;
+            await cb();
+        } else {
+            print("Cancelled.");
+            _awaitingConfirm = false;
+            _confirmCallback = null;
+        }
+        return;
+    }
+
+    print(`\n> ${raw}`);
+    history.push(raw);
+    historyIndex = history.length;
+
+    const parts = raw.split(" ");
+    const cmd = parts[0].toLowerCase();
+    const subCmd = parts[1] ? parts[1].toLowerCase() : "";
+    const args = parts.slice(2).join(" ");
+
+    // BULLETPROOF TOS GUARD
+    if (!tosValid() && cmd !== "tos" && cmd !== "accept") {
+        if (!tosAcceptedVersion) {
+            return print("You must accept the Terms of Service. Type 'tos' to read, then 'accept'.");
+        }
+        if (tosAcceptedVersion !== tosVersionRemote) {
+            return print("TOS updated. You must reaccept. Type 'tos' to read, then 'accept'.");
+        }
+    }
+
+    const isBuiltIn = commands.hasOwnProperty(cmd) || cmd === "installer" || cmd === "plugin";
+    const isCustom = window.customCommands.hasOwnProperty(cmd);
+
+    // Handle Custom Installed Commands
+    if (isCustom && !isBuiltIn) {
+        try {
+            await window.customCommands[cmd](parts.slice(1).join(" "));
+        } catch (e) {
+            print(`Plugin Command Error: ${e.message}`);
+        }
+        return;
+    }
+
+    switch(cmd) {
+        case 'installer':
+            print("Preparing visual installer... Rebooting terminal.");
+            setStorage("run_installer", "true");
+            setTimeout(() => window.location.reload(), 1000);
+            break;
+
+        case 'plugin':
+            let pluginUrls = JSON.parse(getStorage("plugins") || "[]");
+
+            if (subCmd === "add" && args) {
+                if (pluginUrls.includes(args)) {
+                    print("Plugin already installed.");
+                } else {
+                    // Fetch plugin first to check for @requires before confirming
+                    let requires = [];
+                    try {
+                        const preCheck = await fetch(args + "?t=" + Date.now());
+                        if (preCheck.ok) {
+                            const preCode = await preCheck.text();
+                            requires = [...preCode.matchAll(/^\/\/\s*@requires\s+(.+)$/gm)]
+                                .map(m => m[1].trim())
+                                .filter(Boolean);
+                        }
+                    } catch { /* silent, confirmation still shown */ }
+
+                    print("<hr>", true);
+                    print(`<span class="warning-text">!! PLUGIN SECURITY WARNING !!</span>`, true);
+                    print(`Plugins run arbitrary code on your terminal.`);
+                    print(`Only install plugins from sources you trust.`);
+                    print(`<span class="dim">URL: ${args}</span>`, true);
+                    if (requires.length > 0) {
+                        print(`<span class="warning-text">This plugin requires the following dependencies to work:</span>`, true);
+                        requires.forEach(dep => print(`<span class="dim">  - ${dep}</span>`, true));
+                        print(`Dependencies will be loaded automatically.`);
+                    }
+                    print(`Add this plugin? (y/n)`);
+                    print("<hr>", true);
+                    _awaitingConfirm = true;
+                    _confirmCallback = async () => {
+                        pluginUrls.push(args);
+                        setStorage("plugins", JSON.stringify(pluginUrls));
+                        print(`Added plugin: ${args}. Restart terminal to apply.`);
+                    };
+                }
+            } else if (subCmd === "list") {
+                print("<hr>", true);
+                print("Installed Plugins:");
+                if (pluginUrls.length === 0) print(" - None installed.");
+                pluginUrls.forEach((url, i) => print(` [${i}] ${url}`));
+                print("<hr>", true);
+            } else if (subCmd === "remove" && args !== "") {
+                let idx = parseInt(args);
+                if (!isNaN(idx) && idx >= 0 && idx < pluginUrls.length) {
+                    let removed = pluginUrls.splice(idx, 1);
+                    setStorage("plugins", JSON.stringify(pluginUrls));
+                    print(`Removed plugin: ${removed}. Restart terminal to apply.`);
+                } else {
+                    print("Invalid index. Use 'plugin list' to find the index.");
+                }
+            } else if (subCmd === "remove") {
+                print("Usage: plugin remove <index>");
+            } else {
+                print("Usage: plugin add <url> | plugin list | plugin remove <index>");
+            }
+            break;
+
+        case 'safemode':
+            print("Rebooting into safe mode...");
+            setTimeout(() => {
+                const url = new URL(window.location.href);
+                url.searchParams.set("safe", "");
+                window.location.href = url.toString();
+            }, 500);
+            break;
+
+        case 'reboot':
+            print("Rebooting...");
+            setTimeout(() => window.location.reload(), 500);
+            break;
+
+        case 'version':
+            print("<hr>", true);
+            print(VERSION_STRING);
+            print("Status: Stable");
+            print("<hr>", true);
+            break;
+
+        case 'changelog':
+            print("<hr>", true);
+            print("1.0 — Stable Release");
+            print(" - Norepinephrine is officially out of beta.");
+            print(" - Plugin system stable with install, remove, list, and dependency support.");
+            print(" - Safe Mode via ?safe URL or safemode command.");
+            print(" - Plugin add security warning with dependency preview.");
+            print(" - Users online shown live under banner.");
+            print(" - Analytics fire-and-forget with 10 second timeout.");
+            print(" - Cache busting on all plugin and installer fetches.");
+            print(" - Installer falls back to normal terminal on error.");
+            print(" - reinstall and reboot commands.");
+            print(" - TOS system with remote version checking.");
+            print(" - Full plugin API: registerCommand, customCommands, customHelp.");
+            print("<hr>", true);
+            break;
+
+        case 'tos':
+            print("<hr>", true);
+            print(tosContent);
+            print("<hr>", true);
+            break;
+
+        case 'accept':
+            if (!tosVersionRemote) return print("Error: TOS not fully loaded yet.");
+            setStorage("tosver", tosVersionRemote);
+            tosAcceptedVersion = tosVersionRemote;
+            print("TOS accepted. You may now use the terminal.");
+            break;
+
+        case 'stats':
+            if (window.currentStats) {
+                print("<hr>", true);
+                print(`Live Connections: <span class="cmd">${window.currentStats.active}</span>`, true);
+                print(`Terminal ID:      <span class="dim">${hwid}</span>`, true);
+                print("<hr>", true);
+            } else {
+                print("Syncing with network... try again in a moment.");
+            }
+            break;
+
+        case 'reinstall':
+            print("Clearing all local data...");
+            localStorage.clear();
+            print("Done. Rebooting...");
+            setTimeout(() => window.location.reload(), 800);
+            break;
+
+        case 'help':
+            print("<hr>", true);
+            if (_safeMode) print(`<span class="warning-text">[SAFE MODE] Plugins were not loaded.</span>`, true);
+            print("--- Built-in Commands ---");
+            for (let c in commands) print(`<span class="cmd">${c}</span>: ${commands[c]}`, true);
+            if (Object.keys(window.customHelp).length > 0) {
+                print("\n--- Plugin Commands ---");
+                for (let c in window.customHelp) print(`<span class="cmd">${c}</span>: ${window.customHelp[c]}`, true);
+            }
+            print("<hr>", true);
+            break;
+
+        case 'clear':
+            out.innerHTML = "";
+            _usersOnlineDiv = null; // reset so it gets re-appended after clear
+            break;
+
+        default:
+            print(`Unknown command: '${cmd}'. Type 'help'.`);
+    }
+}
+
+tin.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+        handle(tin.value);
+        tin.value = "";
+    } else if (e.key === "ArrowUp") {
+        if (historyIndex > 0) {
+            historyIndex--;
+            tin.value = history[historyIndex];
+        }
+        e.preventDefault();
+    } else if (e.key === "ArrowDown") {
+        if (historyIndex < history.length - 1) {
+            historyIndex++;
+            tin.value = history[historyIndex];
+        } else {
+            historyIndex = history.length;
+            tin.value = "";
+        }
+        e.preventDefault();
+    }
+});
+
+document.addEventListener("click", () => {
+    if (document.activeElement !== tin) tin.focus();
+});
+
+// ==========================================
+// FETCH + EVAL PLUGIN LOADER
+// ==========================================
+window._loadedPlugins = new Set();
+
+async function loadPluginFromUrl(url) {
+    if (window._loadedPlugins.has(url)) return;
+    try {
+        const r = await fetch(url + "?t=" + Date.now());
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        const code = await r.text();
+
+        // Parse @requires declarations
+        const requires = [...code.matchAll(/^\/\/\s*@requires\s+(.+)$/gm)]
+            .map(m => m[1].trim())
+            .filter(Boolean);
+
+        for (const depUrl of requires) {
+            if (!window._loadedPlugins.has(depUrl)) {
+                print(`<span class="dim">[Dependency] Loading: ${depUrl}</span>`, true);
+                await loadPluginFromUrl(depUrl);
+            }
+        }
+
+        window._loadedPlugins.add(url);
+        new Function(code)();
+        print(`[Plugin Loaded]: ${url}`);
+    } catch (err) {
+        print(`<span class="danger-text">[Plugin Error] ${url}: ${err.message}</span>`, true);
+    }
+}
+
+async function loadPlugins() {
+    const pluginUrls = JSON.parse(getStorage("plugins") || "[]");
+    for (const url of pluginUrls) {
+        await loadPluginFromUrl(url);
+    }
+}
+
+// ==========================================
+// ANALYTICS & HWID ENGINE
+// ==========================================
+const GAS_URL = "https://script.google.com/macros/s/AKfycbyTb30dK2Olw4fvCb5yD4YwoVTuHpKyBfzzJ83GsZ_9hTWvwRPqTC3iIb--JMTV0tJxHA/exec";
+
+let hwid = getStorage("terminal_hwid");
+let isNewVisitor = false;
+
+if (!hwid) {
+    hwid = 'ID-' + Math.random().toString(36).substr(2, 9) + '-' + Date.now();
+    setStorage("terminal_hwid", hwid);
+    isNewVisitor = true;
+}
+
+async function syncAnalytics() {
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        const response = await fetch(`${GAS_URL}?hwid=${hwid}`, { signal: controller.signal });
+        clearTimeout(timeout);
+        const data = await response.json();
+        window.currentStats = data;
+        if (typeof data.active === "number") printUsersOnline(data.active);
+        return data;
+    } catch (e) {
+        printUsersOnline("?");
+        return null;
+    }
+}
+
+setInterval(syncAnalytics, 60000);
+
+// ==========================================
+// BOOT SEQUENCE
+// ==========================================
+async function _bootTerminal() {
+    await loadTOS();
+    print(VERSION_STRING);
+
+    // Safe mode banner
+    if (_safeMode) {
+        print("<span class='warning-text'>[ SAFE MODE — Plugins will not be loaded ]</span>", true);
+        print("<span class='dim'>Use 'loadplugins' to load them anyway, or 'plugin list' to manage.</span>", true);
+        print("<hr>", true);
+    }
+
+    // Show placeholder users online line immediately, update once analytics return
+    printUsersOnline("...");
+
+    print("<hr>", true);
+
+    // Fire analytics without awaiting — users online updates when data arrives
+    syncAnalytics();
+    print("<hr>", true);
+
+    if (_safeMode) {
+        window.customCommands["loadplugins"] = async function () {
+            print("Loading plugins...");
+            await loadPlugins();
+            delete window.customCommands["loadplugins"];
+            print("Done. All plugins loaded.");
+        };
+    } else {
+        await loadPlugins();
+    }
+
+    if (!tosAcceptedVersion)
+        print("You must accept the Terms of Service. Type 'tos' to view.");
+    else if (tosAcceptedVersion !== tosVersionRemote)
+        print("TOS updated. Type 'tos' to review and 'accept' to continue.");
+    else
+        print("Type 'help' for available operations.");
+}
+
+// ==========================================
+// BOOT INTERCEPTOR FOR INSTALLER
+// ==========================================
+const _installerPending = localStorage.getItem("run_installer") === "true";
+
+if (_installerPending) {
+    localStorage.removeItem("run_installer");
+    fetch("https://raw.githubusercontent.com/padale323/Norepinephrine-Installer/refs/heads/main/Installer.js?t=" + Date.now())
+        .then(r => {
+            if (!r.ok) throw new Error(`Server returned ${r.status}`);
+            return r.text();
+        })
+        .then(code => {
+            new Function(code)();
+        })
+        .catch(err => {
+            _bootTerminal().then(() => {
+                print(`<span class="danger-text">[Installer Error] Failed to load installer: ${err.message}</span>`, true);
+                print(`<span class="warning-text">Continuing in normal terminal mode.</span>`, true);
+            });
+        });
+} else {
+    _bootTerminal();
+}
+</script>
+</body>
+</html>
