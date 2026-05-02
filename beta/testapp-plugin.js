@@ -5,6 +5,18 @@
  */
 (function () {
 
+    // Define functions on window BEFORE launchApp is called
+    // so onclick attributes can find them immediately
+    window.testappLog = function (msg) {
+        const log = document.getElementById("testapp-log");
+        if (log) log.innerHTML += "> " + msg + "<br>";
+    };
+
+    window.testappTryDouble = function () {
+        const result = window.NoreAPI.launchApp("<p>This should not appear.</p>");
+        window.testappLog("Second launchApp returned: " + result + " (should be false)");
+    };
+
     window.registerCommand("testapp", "Launch a test app to verify NoreAPI.", function () {
 
         const launched = window.NoreAPI.launchApp(`
@@ -45,7 +57,7 @@
                 <p>The terminal is hidden behind this overlay.</p>
                 <hr>
 
-                <button class="testapp-btn" onclick="testappLog('Storage write: ' + (window.NoreAPI.setStorage('testapp_test', 'hello') !== undefined ? 'ok' : 'done'))">
+                <button class="testapp-btn" onclick="testappLog('Storage write ok'); window.NoreAPI.setStorage('testapp_test', 'hello');">
                     Test Storage Write
                 </button>
 
@@ -73,18 +85,6 @@
 
                 <div id="testapp-log"></div>
             </div>
-
-            <script>
-                window.testappLog = function(msg) {
-                    const log = document.getElementById("testapp-log");
-                    if (log) log.innerHTML += "> " + msg + "<br>";
-                }
-
-                window.testappTryDouble = function() {
-                    const result = window.NoreAPI.launchApp("<p>This should not appear.</p>");
-                    window.testappLog("Second launchApp returned: " + result + " (should be false)");
-                }
-            <\/script>
         `);
 
         if (!launched) {
