@@ -2,27 +2,91 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Norepinephrine</title>
     <style>
         :root { --glow: #ffffff; --bg: #0a0c10; --dim: #8b949e; --blue: #58a6ff; --warn: #ffcc00; --danger: #ff4444; }
-        body { margin: 0; background: var(--bg); color: var(--glow); font-family: 'Consolas', monospace; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
-        #output { flex: 1; padding: 25px; overflow-y: auto; white-space: pre-wrap; font-size: 14px; line-height: 1.5; }
-        .input-row { display: flex; align-items: center; padding: 15px 25px; background: #000; border-top: 1px solid #21262d; }
-        #tIn { flex: 1; background: transparent; border: none; color: var(--glow); outline: none; font-family: inherit; font-size: 16px; margin-left: 10px; }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--glow);
+            font-family: 'Consolas', 'Courier New', monospace;
+            height: 100dvh; /* dvh handles mobile browser chrome better than vh */
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        #output {
+            flex: 1;
+            padding: 15px 20px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            font-size: 13px;
+            line-height: 1.6;
+            word-break: break-word; /* stop long URLs breaking layout on mobile */
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .input-row {
+            display: flex;
+            align-items: center;
+            padding: 12px 20px;
+            background: #000;
+            border-top: 1px solid #21262d;
+            /* Keep input row above mobile keyboard */
+            position: sticky;
+            bottom: 0;
+        }
+
+        #tIn {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--glow);
+            outline: none;
+            font-family: inherit;
+            font-size: 16px; /* 16px prevents iOS auto-zoom on focus */
+            margin-left: 10px;
+            /* Remove mobile input styling */
+            -webkit-appearance: none;
+            border-radius: 0;
+        }
+
         .prompt { color: var(--blue); font-weight: bold; }
         .cmd { color: #d2a8ff; font-weight: bold; }
         .warning-text { color: var(--warn); }
         .danger-text { color: var(--danger); font-weight: bold; }
         .dim { color: var(--dim); }
         hr { border: 0; border-top: 1px solid #21262d; margin: 10px 0; }
+
+        #banner { line-height: 1.2; font-size: clamp(2px, 1.1vw, 13px); }
+
+        #nore-app-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: var(--bg);
+            z-index: 9999;
+            overflow: auto;
+            font-family: 'Consolas', 'Courier New', monospace;
+            color: var(--glow);
+        }
+        #nore-app-overlay.active { display: block; }
     </style>
 </head>
 <body>
 
+<div id="nore-app-overlay"></div>
+
 <div id="output"></div>
 <div class="input-row" id="input-container">
     <span class="prompt">></span>
-    <input id="tIn" autocomplete="off" autofocus spellcheck="false">
+    <input id="tIn" autocomplete="off" autocorrect="off" autocapitalize="off" autofocus spellcheck="false" enterkeyhint="send">
 </div>
 
 <script>
@@ -34,6 +98,23 @@ let _safeMode = new URLSearchParams(window.location.search).has("safe");
 let _safeModeKeyCount = 0;
 let _safeModeKeyWindow = null;
 
+if (_hasPlugins && !_safeMode) {
+    const _safeModeKeyHandler = (e) => {
+        if (e.key === "s" || e.key === "S") {
+            e.preventDefault();
+            _safeModeKeyCount++;
+            clearTimeout(_safeModeKeyWindow);
+            _safeModeKeyWindow = setTimeout(() => { _safeModeKeyCount = 0; }, 1000);
+            if (_safeModeKeyCount >= 5) {
+                _safeMode = true;
+                document.removeEventListener("keydown", _safeModeKeyHandler);
+            }
+        }
+    };
+    document.addEventListener("keydown", _safeModeKeyHandler);
+    setTimeout(() => document.removeEventListener("keydown", _safeModeKeyHandler), 5000);
+}
+
 // ==========================================
 // MAIN TERMINAL LOGIC
 // ==========================================
@@ -42,15 +123,16 @@ const tin = document.getElementById("tIn");
 let history = [];
 let historyIndex = -1;
 
-const VERSION_STRING = `
+const ASCII_ART = `
 ███╗   ██╗ ██████╗ ██████╗ ███████╗██████╗ ██╗███╗   ██╗███████╗██████╗ ██╗  ██╗██████╗ ██╗███╗   ██╗███████╗
 ████╗  ██║██╔═══██╗██╔══██╗██╔════╝██╔══██╗██║████╗  ██║██╔════╝██╔══██╗██║  ██║██╔══██╗██║████╗  ██║██╔════╝
 ██╔██╗ ██║██║   ██║██████╔╝█████╗  ██████╔╝██║██╔██╗ ██║█████╗  ██████╔╝███████║██████╔╝██║██╔██╗ ██║█████╗  
 ██║╚██╗██║██║   ██║██╔══██╗██╔══╝  ██╔═══╝ ██║██║╚██╗██║██╔══╝  ██╔═══╝ ██╔══██║██╔══██╗██║██║╚██╗██║██╔══╝  
 ██║ ╚████║╚██████╔╝██║  ██║███████╗██║     ██║██║ ╚████║███████╗██║     ██║  ██║██║  ██║██║██║ ╚████║███████╗
-╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚══════╝                                                                                                          
-Release v1.0 Build 1
+╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚══════╝
 `;
+
+const VERSION_STRING = "Build 2 Release Beta v1.1";
 
 let tosVersionRemote = null;
 let tosContent = "";
@@ -94,6 +176,20 @@ function printUsersOnline(count) {
         out.appendChild(_usersOnlineDiv);
     }
     _usersOnlineDiv.innerHTML = `<span class="dim">${count} user${count === 1 ? "" : "s"} online</span>`;
+    out.scrollTop = out.scrollHeight;
+}
+
+// Print the banner — ASCII art scales with viewport, version string stays normal size
+function printBanner() {
+    const art = document.createElement("div");
+    art.id = "banner";
+    art.textContent = ASCII_ART;
+    out.appendChild(art);
+
+    const ver = document.createElement("div");
+    ver.textContent = VERSION_STRING;
+    out.appendChild(ver);
+
     out.scrollTop = out.scrollHeight;
 }
 
@@ -205,29 +301,52 @@ async function handle(input) {
                 if (pluginUrls.includes(args)) {
                     print("Plugin already installed.");
                 } else {
-                    // Fetch plugin first to check for @requires before confirming
                     let requires = [];
+                    let permissions = [];
                     try {
                         const preCheck = await fetch(args + "?t=" + Date.now());
                         if (preCheck.ok) {
                             const preCode = await preCheck.text();
+
+                            // Parse @requires
                             requires = [...preCode.matchAll(/^\/\/\s*@requires\s+(.+)$/gm)]
                                 .map(m => m[1].trim())
                                 .filter(Boolean);
+
+                            // Static analysis — detect what the plugin actually uses
+                            const checks = [
+                                { key: "network",     label: "Makes network requests (fetch)",               pattern: /fetch\(/,                         risk: true },
+                                { key: "storage",     label: "Reads/writes localStorage",                    pattern: /localStorage/,                    risk: true },
+                                { key: "handle-wrap", label: "Intercepts all terminal input (handle wrap)",  pattern: /window\.handle|handle\s*=/,        risk: true },
+                                { key: "dom",         label: "Directly manipulates the page DOM",            pattern: /document\./,                      risk: true },
+                                { key: "eval",        label: "Executes dynamic code (eval/new Function)",   pattern: /\beval\(|new Function\(/,          risk: true },
+                            ];
+                            permissions = checks.filter(c => c.pattern.test(preCode));
                         }
-                    } catch { /* silent, confirmation still shown */ }
+                    } catch { }
 
                     print("<hr>", true);
                     print(`<span class="warning-text">!! PLUGIN SECURITY WARNING !!</span>`, true);
                     print(`Plugins run arbitrary code on your terminal.`);
                     print(`Only install plugins from sources you trust.`);
                     print(`<span class="dim">URL: ${args}</span>`, true);
+
+                    if (permissions.length > 0) {
+                        print(`\nDetected capabilities:`, true);
+                        permissions.forEach(p => {
+                            print(`<span class="danger-text">  ⚠ ${p.label}</span>`, true);
+                        });
+                    } else {
+                        print(`<span class="dim">No elevated capabilities detected.</span>`, true);
+                    }
+
                     if (requires.length > 0) {
-                        print(`<span class="warning-text">This plugin requires the following dependencies to work:</span>`, true);
+                        print(`\nRequired dependencies:`, true);
                         requires.forEach(dep => print(`<span class="dim">  - ${dep}</span>`, true));
                         print(`Dependencies will be loaded automatically.`);
                     }
-                    print(`Add this plugin? (y/n)`);
+
+                    print(`\nAdd this plugin? (y/n)`);
                     print("<hr>", true);
                     _awaitingConfirm = true;
                     _confirmCallback = async () => {
@@ -274,8 +393,8 @@ async function handle(input) {
 
         case 'version':
             print("<hr>", true);
-            print(VERSION_STRING);
-            print("Status: Stable");
+            printBanner();
+            print("Status: Beta");
             print("<hr>", true);
             break;
 
@@ -293,6 +412,7 @@ async function handle(input) {
             print(" - reinstall and reboot commands.");
             print(" - TOS system with remote version checking.");
             print(" - Full plugin API: registerCommand, customCommands, customHelp.");
+            print(" - Mobile improvements: viewport fix, iOS zoom fix, word wrap, dvh layout.");
             print("<hr>", true);
             break;
 
@@ -341,7 +461,7 @@ async function handle(input) {
 
         case 'clear':
             out.innerHTML = "";
-            _usersOnlineDiv = null; // reset so it gets re-appended after clear
+            _usersOnlineDiv = null;
             break;
 
         default:
@@ -371,6 +491,11 @@ tin.addEventListener("keydown", (e) => {
     }
 });
 
+// Scroll output to bottom when keyboard opens on mobile
+tin.addEventListener("focus", () => {
+    setTimeout(() => out.scrollTop = out.scrollHeight, 300);
+});
+
 document.addEventListener("click", () => {
     if (document.activeElement !== tin) tin.focus();
 });
@@ -387,7 +512,6 @@ async function loadPluginFromUrl(url) {
         if (!r.ok) throw new Error(`Server returned ${r.status}`);
         const code = await r.text();
 
-        // Parse @requires declarations
         const requires = [...code.matchAll(/^\/\/\s*@requires\s+(.+)$/gm)]
             .map(m => m[1].trim())
             .filter(Boolean);
@@ -413,6 +537,54 @@ async function loadPlugins() {
         await loadPluginFromUrl(url);
     }
 }
+
+// ==========================================
+// NORE APP API
+// Allows plugins to launch full-page apps
+// and return cleanly to the terminal.
+// ==========================================
+const _appOverlay = document.getElementById("nore-app-overlay");
+let _appActive = false;
+
+window.NoreAPI = {
+    version: "1.0",
+    print,
+    getStorage,
+    setStorage,
+
+    // Launch a full-page app
+    // html: string of HTML content to render
+    // Returns true if launched, false if an app is already running
+    launchApp(html) {
+        if (_appActive) {
+            print(`<span class="danger-text">[NoreAPI] An app is already running. Call NoreAPI.exitApp() first.</span>`, true);
+            return false;
+        }
+        _appActive = true;
+        _appOverlay.innerHTML = html;
+        _appOverlay.classList.add("active");
+        // Hide terminal input so keyboard shortcuts don't interfere
+        document.getElementById("input-container").style.display = "none";
+        return true;
+    },
+
+    // Exit the current app and return to terminal
+    exitApp() {
+        if (!_appActive) return;
+        _appActive = false;
+        _appOverlay.classList.remove("active");
+        _appOverlay.innerHTML = "";
+        document.getElementById("input-container").style.display = "";
+        // Refocus terminal input
+        tin.focus();
+        print(`<span class="dim">[App exited]</span>`, true);
+    },
+
+    // Check if an app is currently running
+    isAppActive() {
+        return _appActive;
+    }
+};
 
 // ==========================================
 // ANALYTICS & HWID ENGINE
@@ -451,23 +623,17 @@ setInterval(syncAnalytics, 60000);
 // ==========================================
 async function _bootTerminal() {
     await loadTOS();
-    print(VERSION_STRING);
+    printBanner();
 
-    // Safe mode banner
     if (_safeMode) {
         print("<span class='warning-text'>[ SAFE MODE — Plugins will not be loaded ]</span>", true);
         print("<span class='dim'>Use 'loadplugins' to load them anyway, or 'plugin list' to manage.</span>", true);
         print("<hr>", true);
     }
 
-    // Show placeholder users online line immediately, update once analytics return
     printUsersOnline("...");
-
     print("<hr>", true);
-
-    // Fire analytics without awaiting — users online updates when data arrives
     syncAnalytics();
-    print("<hr>", true);
 
     if (_safeMode) {
         window.customCommands["loadplugins"] = async function () {
