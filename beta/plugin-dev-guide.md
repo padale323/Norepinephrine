@@ -224,3 +224,55 @@ If your plugin stores state in `localStorage` and relies on being loaded every b
 - Handle errors gracefully — a thrown error in a command will print `Plugin Command Error: ...` to the terminal
 - Use `console.log("[myplugin] Plugin ready.")` at the end so users can confirm it loaded (visible if the console-redirect plugin is active)
 - Test in safe mode to make sure your plugin degrades cleanly when not loaded
+
+---
+
+## Launching Full-Page Apps with NoreAPI
+
+Norepinephrine exposes `window.NoreAPI` which lets your plugin take over the full page to render a custom UI, then return cleanly to the terminal when done — the same way the visual installer works.
+
+### API Reference
+
+```js
+window.NoreAPI.launchApp(html)   // Launch an app with HTML content
+window.NoreAPI.exitApp()         // Return to the terminal
+window.NoreAPI.isAppActive()     // Returns true if an app is running
+window.NoreAPI.print             // Same as the terminal print function
+window.NoreAPI.getStorage        // Same as getStorage
+window.NoreAPI.setStorage        // Same as setStorage
+window.NoreAPI.version           // Norepinephrine version string
+```
+
+### Basic Example
+
+```js
+window.registerCommand("myapp", "Launch my app.", function () {
+    window.NoreAPI.launchApp(`
+        <div style="padding: 30px; color: white; font-family: monospace;">
+            <h2>My App</h2>
+            <p>This is a full-page app.</p>
+            <button onclick="window.NoreAPI.exitApp()">Back to terminal</button>
+        </div>
+    `);
+});
+```
+
+### Notes
+
+- Only one app can run at a time. `launchApp` returns `false` and prints an error if an app is already active.
+- The terminal input is hidden while an app is running so keyboard shortcuts don't interfere.
+- `exitApp()` restores the terminal, clears the app overlay, refocuses the input, and prints `[App exited]`.
+- Your app HTML runs in the same page context as the terminal, so it has full access to `window.NoreAPI`, `localStorage`, `window.customCommands` etc.
+- The overlay inherits the terminal's background color and font — style from there.
+- Always provide a way for the user to call `NoreAPI.exitApp()`. If you don't, the user is stuck until they reload.
+
+### Using NoreAPI Storage in Your App
+
+Since `NoreAPI.getStorage` and `NoreAPI.setStorage` are just references to the terminal's own storage helpers, you can use them directly inside your app's inline event handlers:
+
+```html
+<button onclick="
+    window.NoreAPI.setStorage('myapp_setting', 'value');
+    window.NoreAPI.exitApp();
+">Save and Exit</button>
+```
