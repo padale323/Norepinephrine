@@ -91,6 +91,11 @@
 
 <script>
 // ==========================================
+// CONFIGURATION FLAGS
+// ==========================================
+const BETA_AVAILABLE = true; // Set to false when no beta is available
+
+// ==========================================
 // BETA CHANNEL DETECTION
 // Runs before everything else.
 // Redirects between stable and beta based
@@ -106,6 +111,12 @@
     // If on beta with no cookie, auto-set to 1
     if (onBeta && betaFlag === null) {
         localStorage.setItem("beta_enabled", "1");
+    }
+
+    // If beta is not available, always redirect to stable from beta
+    if (onBeta && !BETA_AVAILABLE) {
+        window.location.replace(STABLE_URL);
+        return;
     }
 
     // Redirect if flag and URL don't match
@@ -149,20 +160,21 @@ let _safeModeKeyCount = 0;
 let _safeModeKeyWindow = null;
 
 if (_hasPlugins && !_safeMode) {
-    const _safeModeKeyHandler = (e) => {
+    const _safeModeKeyHandler = function(e) {
         if (e.key === "s" || e.key === "S") {
             e.preventDefault();
             _safeModeKeyCount++;
             clearTimeout(_safeModeKeyWindow);
-            _safeModeKeyWindow = setTimeout(() => { _safeModeKeyCount = 0; }, 1000);
+            _safeModeKeyWindow = setTimeout(function() { _safeModeKeyCount = 0; }, 1000);
             if (_safeModeKeyCount >= 5) {
                 _safeMode = true;
-                document.removeEventListener("keydown", _safeModeKeyHandler);
+                document.removeEventListener("keydown", _safeModeKeyHandler, true);
             }
         }
     };
-    document.addEventListener("keydown", _safeModeKeyHandler);
-    setTimeout(() => document.removeEventListener("keydown", _safeModeKeyHandler), 5000);
+    // Use capture phase (true) so we intercept before the input element gets it
+    document.addEventListener("keydown", _safeModeKeyHandler, true);
+    setTimeout(function() { document.removeEventListener("keydown", _safeModeKeyHandler, true); }, 5000);
 }
 
 // ==========================================
@@ -182,7 +194,7 @@ const ASCII_ART = `
 ╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚══════╝
 `;
 
-const VERSION_STRING = "Build 3 Release v1.1 Beta";
+const VERSION_STRING = "v1.1 Build 3";
 
 let tosVersionRemote = null;
 let tosContent = "";
@@ -288,10 +300,10 @@ const commands = {
     "help": "Show this menu."
 };
 
-// Show the right channel command based on current URL
+// Show the right channel command based on current URL and beta availability
 if (_onBeta) {
     commands["disablebetafeatures"] = "Switch back to the stable channel.";
-} else {
+} else if (BETA_AVAILABLE) {
     commands["enablebetafeatures"] = "Switch to the beta channel.";
 }
 
@@ -484,26 +496,25 @@ async function handle(input) {
         case 'version':
             print("<hr>", true);
             printBanner();
-            print("Status: Beta");
+            print("Status: 1.1RC1");
             print("<hr>", true);
             break;
 
         case 'changelog':
             print("<hr>", true);
-            print("Beta v1.1 Build 3 Changes:");
-            print(" - [BETA] Early load plugins: load before everything via 'plugin earlyload add <url>'.");
-            print(" - Early load errors stored and shown after boot so they aren't lost.");
-            print(" - NoreAPI: launchApp now accepts a setup() function called after HTML is in DOM.");
-            print(" - NoreAPI: fixed event handler binding in app overlays.");
-            print(" - Version bump to Beta v1.1 Build 3.");
+            print("v1.1 — What's New:");
             print(" - NoreAPI: plugins can launch full-page apps via NoreAPI.launchApp().");
+            print(" - NoreAPI: builder function pattern — no HTML strings or scope issues.");
             print(" - Plugin install runs static analysis and shows detected capabilities.");
-            print(" - Mobile improvements: dvh layout, iOS zoom fix, responsive ASCII banner.");
-            print("1.0 — Stable Release:");
-            print(" - Plugin system with install, remove, list, and dependency support.");
+            print(" - Plugin dependencies via // @requires at top of plugin file.");
+            print(" - Early load plugins run before everything else on boot.");
+            print(" - Plugin list shows early load plugins tagged with [early].");
+            print(" - Beta channel support via enablebetafeatures / disablebetafeatures.");
             print(" - Safe Mode via ?safe URL, spam S on boot, or safemode command.");
-            print(" - Analytics fire-and-forget with 10 second timeout.");
-            print(" - TOS system with remote version checking.");
+            print(" - Plugin add security warning and confirmation prompt.");
+            print(" - Mobile improvements: dvh layout, iOS zoom fix, responsive ASCII banner.");
+            print(" - Users online shown live under banner.");
+            print(" - Analytics with 10 second timeout.");
             print("<hr>", true);
             break;
 
@@ -539,12 +550,14 @@ async function handle(input) {
             break;
 
         case 'enablebetafeatures':
-            if (_onBeta) {
+            if (!BETA_AVAILABLE) {
+                print("There is no beta available at this time.");
+            } else if (_onBeta) {
                 print("Already running on the beta channel.");
             } else {
-                print("Enabling beta features and switching to beta channel...");
+                print("Switching to beta channel...");
                 localStorage.setItem("beta_enabled", "1");
-                setTimeout(() => window.location.replace(BETA_URL), 800);
+                setTimeout(function() { window.location.replace(BETA_URL); }, 800);
             }
             break;
 
@@ -552,9 +565,9 @@ async function handle(input) {
             if (!_onBeta) {
                 print("Already running on the stable channel.");
             } else {
-                print("Disabling beta features and switching to stable channel...");
+                print("Switching to stable channel...");
                 localStorage.setItem("beta_enabled", "0");
-                setTimeout(() => window.location.replace(STABLE_URL), 800);
+                setTimeout(function() { window.location.replace(STABLE_URL); }, 800);
             }
             break;
 
@@ -670,11 +683,11 @@ window.NoreAPI = {
     // Returns true if launched, false if an app is already running.
     launchApp(builder) {
         if (_appActive) {
-            print(`<span class="danger-text">[NoreAPI] An app is already running. Call NoreAPI.exitApp() first.</span>`, true);
+            print('<span class="danger-text">[NoreAPI] An app is already running. Call NoreAPI.exitApp() first.</span>', true);
             return false;
         }
         if (typeof builder !== "function") {
-            print(`<span class="danger-text">[NoreAPI] launchApp requires a function, not a string. See the plugin dev guide.</span>`, true);
+            print('<span class="danger-text">[NoreAPI] launchApp requires a function. See the plugin dev guide.</span>', true);
             return false;
         }
         _appActive = true;
@@ -683,28 +696,27 @@ window.NoreAPI = {
         container.style.cssText = "width:100%;min-height:100%;box-sizing:border-box;";
         _appOverlay.appendChild(container);
         _appOverlay.classList.add("active");
-        document.getElementById("input-container").style.display = "none";
-        // Call builder after container is in DOM — all queries safe
+        // Disable input so user can't type to terminal while app is open
+        tin.disabled = true;
+        tin.blur();
         try {
             builder(container);
         } catch(e) {
-            print(`<span class="danger-text">[NoreAPI] App error: ${e.message}</span>`, true);
+            print('<span class="danger-text">[NoreAPI] App error: ' + e.message + '</span>', true);
             this.exitApp();
             return false;
         }
         return true;
     },
 
-    // Exit the current app and return to terminal
     exitApp() {
         if (!_appActive) return;
         _appActive = false;
         _appOverlay.classList.remove("active");
         _appOverlay.innerHTML = "";
-        document.getElementById("input-container").style.display = "";
-        // Refocus terminal input
+        tin.disabled = false;
         tin.focus();
-        print(`<span class="dim">[App exited]</span>`, true);
+        print('<span class="dim">[App exited]</span>', true);
     },
 
     // Check if an app is currently running
