@@ -103,6 +103,12 @@
     const onStable   = window.location.href.startsWith(STABLE_URL) && !onBeta;
     const betaFlag   = localStorage.getItem("beta_enabled");
 
+    // If on beta with no cookie, auto-set to 1
+    if (onBeta && betaFlag === null) {
+        localStorage.setItem("beta_enabled", "1");
+    }
+
+    // Redirect if flag and URL don't match
     if (onStable && betaFlag === "1") {
         window.location.replace(BETA_URL);
     } else if (onBeta && betaFlag === "0") {
@@ -176,7 +182,7 @@ const ASCII_ART = `
 ╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚══════╝
 `;
 
-const VERSION_STRING = "Beta v1.1 Build 3";
+const VERSION_STRING = "Build 3 Release v1.1 Beta";
 
 let tosVersionRemote = null;
 let tosContent = "";
@@ -478,7 +484,7 @@ async function handle(input) {
         case 'version':
             print("<hr>", true);
             printBanner();
-            print("Status: Stable");
+            print("Status: Beta");
             print("<hr>", true);
             break;
 
@@ -490,7 +496,6 @@ async function handle(input) {
             print(" - NoreAPI: launchApp now accepts a setup() function called after HTML is in DOM.");
             print(" - NoreAPI: fixed event handler binding in app overlays.");
             print(" - Version bump to Beta v1.1 Build 3.");
-            print("v1.1 Changes:");
             print(" - NoreAPI: plugins can launch full-page apps via NoreAPI.launchApp().");
             print(" - Plugin install runs static analysis and shows detected capabilities.");
             print(" - Mobile improvements: dvh layout, iOS zoom fix, responsive ASCII banner.");
