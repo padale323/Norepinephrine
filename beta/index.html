@@ -91,6 +91,50 @@
 
 <script>
 // ==========================================
+// BETA CHANNEL DETECTION
+// Runs before everything else.
+// Redirects between stable and beta based
+// on localStorage flag and current URL.
+// ==========================================
+(function() {
+    const STABLE_URL = "https://padale323.github.io/Norepinephrine/";
+    const BETA_URL   = "https://padale323.github.io/Norepinephrine/beta/";
+    const onBeta     = window.location.href.startsWith(BETA_URL);
+    const onStable   = window.location.href.startsWith(STABLE_URL) && !onBeta;
+    const betaFlag   = localStorage.getItem("beta_enabled");
+
+    if (onStable && betaFlag === "1") {
+        window.location.replace(BETA_URL);
+    } else if (onBeta && betaFlag === "0") {
+        window.location.replace(STABLE_URL);
+    }
+})();
+
+// ==========================================
+// [BETA] EARLY LOAD PLUGINS
+// Loads plugins registered as early-load
+// before anything else — TOS, analytics,
+// regular plugins. Use with caution.
+// Register with: plugin earlyload add <url>
+// ==========================================
+(async () => {
+    const earlyUrls = JSON.parse(localStorage.getItem("early_plugins") || "[]");
+    for (const url of earlyUrls) {
+        try {
+            const r = await fetch(url + "?t=" + Date.now());
+            if (!r.ok) throw new Error(`Server returned ${r.status}`);
+            const code = await r.text();
+            new Function(code)();
+        } catch (e) {
+            // Store error to print after terminal boots
+            const errs = JSON.parse(sessionStorage.getItem("early_plugin_errors") || "[]");
+            errs.push({ url, msg: e.message });
+            sessionStorage.setItem("early_plugin_errors", JSON.stringify(errs));
+        }
+    }
+})();
+
+// ==========================================
 // SAFE MODE DETECTION
 // ==========================================
 const _hasPlugins = JSON.parse(localStorage.getItem("plugins") || "[]").length > 0;
@@ -132,7 +176,7 @@ const ASCII_ART = `
 ╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚══════╝
 `;
 
-const VERSION_STRING = "Build 2 Release Beta v1.1";
+const VERSION_STRING = "Beta v1.1 Build 3";
 
 let tosVersionRemote = null;
 let tosContent = "";
@@ -219,6 +263,10 @@ function tosValid() {
     return tosAcceptedVersion && tosVersionRemote && tosAcceptedVersion === tosVersionRemote;
 }
 
+const STABLE_URL = "https://padale323.github.io/Norepinephrine/";
+const BETA_URL   = "https://padale323.github.io/Norepinephrine/beta/";
+const _onBeta    = window.location.href.startsWith(BETA_URL);
+
 const commands = {
     "installer": "Launch the visual plugin installer.",
     "plugin": "Manage plugins (add <url> | list | remove <index>).",
@@ -233,6 +281,13 @@ const commands = {
     "clear": "Clear screen.",
     "help": "Show this menu."
 };
+
+// Show the right channel command based on current URL
+if (_onBeta) {
+    commands["disablebetafeatures"] = "Switch back to the stable channel.";
+} else {
+    commands["enablebetafeatures"] = "Switch to the beta channel.";
+}
 
 async function handle(input) {
     const raw = input.trim();
@@ -303,6 +358,8 @@ async function handle(input) {
                 } else {
                     let requires = [];
                     let permissions = [];
+                    let requestEarlyload = false;
+                    let requireEarlyload = false;
                     try {
                         const preCheck = await fetch(args + "?t=" + Date.now());
                         if (preCheck.ok) {
@@ -313,13 +370,17 @@ async function handle(input) {
                                 .map(m => m[1].trim())
                                 .filter(Boolean);
 
+                            // Detect early load declarations
+                            requireEarlyload = /^\/\/\s*@require-earlyload\s*$/m.test(preCode);
+                            requestEarlyload = !requireEarlyload && /^\/\/\s*@request-earlyload\s*$/m.test(preCode);
+
                             // Static analysis — detect what the plugin actually uses
                             const checks = [
-                                { key: "network",     label: "Makes network requests (fetch)",               pattern: /fetch\(/,                         risk: true },
-                                { key: "storage",     label: "Reads/writes localStorage",                    pattern: /localStorage/,                    risk: true },
-                                { key: "handle-wrap", label: "Intercepts all terminal input (handle wrap)",  pattern: /window\.handle|handle\s*=/,        risk: true },
-                                { key: "dom",         label: "Directly manipulates the page DOM",            pattern: /document\./,                      risk: true },
-                                { key: "eval",        label: "Executes dynamic code (eval/new Function)",   pattern: /\beval\(|new Function\(/,          risk: true },
+                                { key: "network",     label: "Makes network requests (fetch)",              pattern: /fetch\(/,                       risk: true },
+                                { key: "storage",     label: "Reads/writes localStorage",                   pattern: /localStorage/,                  risk: true },
+                                { key: "handle-wrap", label: "Intercepts all terminal input (handle wrap)", pattern: /window\.handle|handle\s*=/,      risk: true },
+                                { key: "dom",         label: "Directly manipulates the page DOM",           pattern: /document\./,                    risk: true },
+                                { key: "eval",        label: "Executes dynamic code (eval/new Function)",   pattern: /\beval\(|new Function\(/,        risk: true },
                             ];
                             permissions = checks.filter(c => c.pattern.test(preCode));
                         }
@@ -330,6 +391,13 @@ async function handle(input) {
                     print(`Plugins run arbitrary code on your terminal.`);
                     print(`Only install plugins from sources you trust.`);
                     print(`<span class="dim">URL: ${args}</span>`, true);
+
+                    if (requireEarlyload) {
+                        print(`<span class="danger-text">⚠ [BETA] This plugin requires early load — it will be added to early load plugins and run before everything on boot.</span>`, true);
+                    } else if (requestEarlyload) {
+                        print(`<span class="warning-text">⚠ [BETA] This plugin requests early load — it prefers to run before other plugins but does not require it.</span>`, true);
+                        print(`It will be added to early load plugins.`);
+                    }
 
                     if (permissions.length > 0) {
                         print(`\nDetected capabilities:`, true);
@@ -358,15 +426,31 @@ async function handle(input) {
             } else if (subCmd === "list") {
                 print("<hr>", true);
                 print("Installed Plugins:");
-                if (pluginUrls.length === 0) print(" - None installed.");
-                pluginUrls.forEach((url, i) => print(` [${i}] ${url}`));
+                const earlyUrls2 = JSON.parse(getStorage("early_plugins") || "[]");
+                const allUrls = [
+                    ...pluginUrls.map(u => ({ url: u, early: false })),
+                    ...earlyUrls2.map(u => ({ url: u, early: true }))
+                ];
+                if (allUrls.length === 0) print(" - None installed.");
+                allUrls.forEach((p, i) => print(` [${i}] ${p.url}${p.early ? ' <span class="warning-text">[early]</span>' : ''}`, true));
                 print("<hr>", true);
             } else if (subCmd === "remove" && args !== "") {
+                const earlyUrlsR = JSON.parse(getStorage("early_plugins") || "[]");
+                const allR = [
+                    ...pluginUrls.map(u => ({ url: u, early: false })),
+                    ...earlyUrlsR.map(u => ({ url: u, early: true }))
+                ];
                 let idx = parseInt(args);
-                if (!isNaN(idx) && idx >= 0 && idx < pluginUrls.length) {
-                    let removed = pluginUrls.splice(idx, 1);
-                    setStorage("plugins", JSON.stringify(pluginUrls));
-                    print(`Removed plugin: ${removed}. Restart terminal to apply.`);
+                if (!isNaN(idx) && idx >= 0 && idx < allR.length) {
+                    const target = allR[idx];
+                    if (target.early) {
+                        const newEarly = earlyUrlsR.filter(u => u !== target.url);
+                        setStorage("early_plugins", JSON.stringify(newEarly));
+                    } else {
+                        const newPlugins = pluginUrls.filter(u => u !== target.url);
+                        setStorage("plugins", JSON.stringify(newPlugins));
+                    }
+                    print(`Removed plugin: ${target.url}. Restart terminal to apply.`);
                 } else {
                     print("Invalid index. Use 'plugin list' to find the index.");
                 }
@@ -394,25 +478,27 @@ async function handle(input) {
         case 'version':
             print("<hr>", true);
             printBanner();
-            print("Status: Beta");
+            print("Status: Stable");
             print("<hr>", true);
             break;
 
         case 'changelog':
             print("<hr>", true);
-            print("1.0 — Stable Release");
-            print(" - Norepinephrine is officially out of beta.");
-            print(" - Plugin system stable with install, remove, list, and dependency support.");
-            print(" - Safe Mode via ?safe URL or safemode command.");
-            print(" - Plugin add security warning with dependency preview.");
-            print(" - Users online shown live under banner.");
+            print("Beta v1.1 Build 3 Changes:");
+            print(" - [BETA] Early load plugins: load before everything via 'plugin earlyload add <url>'.");
+            print(" - Early load errors stored and shown after boot so they aren't lost.");
+            print(" - NoreAPI: launchApp now accepts a setup() function called after HTML is in DOM.");
+            print(" - NoreAPI: fixed event handler binding in app overlays.");
+            print(" - Version bump to Beta v1.1 Build 3.");
+            print("v1.1 Changes:");
+            print(" - NoreAPI: plugins can launch full-page apps via NoreAPI.launchApp().");
+            print(" - Plugin install runs static analysis and shows detected capabilities.");
+            print(" - Mobile improvements: dvh layout, iOS zoom fix, responsive ASCII banner.");
+            print("1.0 — Stable Release:");
+            print(" - Plugin system with install, remove, list, and dependency support.");
+            print(" - Safe Mode via ?safe URL, spam S on boot, or safemode command.");
             print(" - Analytics fire-and-forget with 10 second timeout.");
-            print(" - Cache busting on all plugin and installer fetches.");
-            print(" - Installer falls back to normal terminal on error.");
-            print(" - reinstall and reboot commands.");
             print(" - TOS system with remote version checking.");
-            print(" - Full plugin API: registerCommand, customCommands, customHelp.");
-            print(" - Mobile improvements: viewport fix, iOS zoom fix, word wrap, dvh layout.");
             print("<hr>", true);
             break;
 
@@ -445,6 +531,26 @@ async function handle(input) {
             localStorage.clear();
             print("Done. Rebooting...");
             setTimeout(() => window.location.reload(), 800);
+            break;
+
+        case 'enablebetafeatures':
+            if (_onBeta) {
+                print("Already running on the beta channel.");
+            } else {
+                print("Enabling beta features and switching to beta channel...");
+                localStorage.setItem("beta_enabled", "1");
+                setTimeout(() => window.location.replace(BETA_URL), 800);
+            }
+            break;
+
+        case 'disablebetafeatures':
+            if (!_onBeta) {
+                print("Already running on the stable channel.");
+            } else {
+                print("Disabling beta features and switching to stable channel...");
+                localStorage.setItem("beta_enabled", "0");
+                setTimeout(() => window.location.replace(STABLE_URL), 800);
+            }
             break;
 
         case 'help':
@@ -552,19 +658,35 @@ window.NoreAPI = {
     getStorage,
     setStorage,
 
-    // Launch a full-page app
-    // html: string of HTML content to render
-    // Returns true if launched, false if an app is already running
-    launchApp(html) {
+    // Launch a full-page app.
+    // builder: function that receives a container div and builds the UI into it.
+    //          All DOM manipulation happens after the container is in the page,
+    //          so getElementById and event listeners work immediately.
+    // Returns true if launched, false if an app is already running.
+    launchApp(builder) {
         if (_appActive) {
             print(`<span class="danger-text">[NoreAPI] An app is already running. Call NoreAPI.exitApp() first.</span>`, true);
             return false;
         }
+        if (typeof builder !== "function") {
+            print(`<span class="danger-text">[NoreAPI] launchApp requires a function, not a string. See the plugin dev guide.</span>`, true);
+            return false;
+        }
         _appActive = true;
-        _appOverlay.innerHTML = html;
+        _appOverlay.innerHTML = "";
+        const container = document.createElement("div");
+        container.style.cssText = "width:100%;min-height:100%;box-sizing:border-box;";
+        _appOverlay.appendChild(container);
         _appOverlay.classList.add("active");
-        // Hide terminal input so keyboard shortcuts don't interfere
         document.getElementById("input-container").style.display = "none";
+        // Call builder after container is in DOM — all queries safe
+        try {
+            builder(container);
+        } catch(e) {
+            print(`<span class="danger-text">[NoreAPI] App error: ${e.message}</span>`, true);
+            this.exitApp();
+            return false;
+        }
         return true;
     },
 
@@ -652,6 +774,15 @@ async function _bootTerminal() {
         print("TOS updated. Type 'tos' to review and 'accept' to continue.");
     else
         print("Type 'help' for available operations.");
+
+    // Print any early load plugin errors that were stored before boot
+    const earlyErrors = JSON.parse(sessionStorage.getItem("early_plugin_errors") || "[]");
+    if (earlyErrors.length > 0) {
+        earlyErrors.forEach(e => {
+            print(`<span class="danger-text">[Early Plugin Error] ${e.url}: ${e.msg}</span>`, true);
+        });
+        sessionStorage.removeItem("early_plugin_errors");
+    }
 }
 
 // ==========================================
