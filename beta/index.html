@@ -13,8 +13,8 @@
             margin: 0;
             background: var(--bg);
             color: var(--glow);
-            font-family: 'Consolas', 'Courier New', monospace;
-            height: 100dvh; /* dvh handles mobile browser chrome better than vh */
+            font-family: 'Consolas', monospace;
+            height: 100dvh;
             display: flex;
             flex-direction: column;
             overflow: hidden;
@@ -22,22 +22,21 @@
 
         #output {
             flex: 1;
-            padding: 15px 20px;
+            padding: 25px;
             overflow-y: auto;
             white-space: pre-wrap;
-            font-size: 13px;
-            line-height: 1.6;
-            word-break: break-word; /* stop long URLs breaking layout on mobile */
+            font-size: 14px;
+            line-height: 1.5;
+            word-break: break-word;
             -webkit-overflow-scrolling: touch;
         }
 
         .input-row {
             display: flex;
             align-items: center;
-            padding: 12px 20px;
+            padding: 15px 25px;
             background: #000;
             border-top: 1px solid #21262d;
-            /* Keep input row above mobile keyboard */
             position: sticky;
             bottom: 0;
         }
@@ -49,9 +48,8 @@
             color: var(--glow);
             outline: none;
             font-family: inherit;
-            font-size: 16px; /* 16px prevents iOS auto-zoom on focus */
+            font-size: 16px;
             margin-left: 10px;
-            /* Remove mobile input styling */
             -webkit-appearance: none;
             border-radius: 0;
         }
@@ -129,10 +127,9 @@ const BETA_AVAILABLE = true; // Set to false when no beta is available
 
 // ==========================================
 // [BETA] EARLY LOAD PLUGINS
-// Loads plugins registered as early-load
-// before anything else — TOS, analytics,
-// regular plugins. Use with caution.
-// Register with: plugin earlyload add <url>
+// Loads after beta detection but before
+// anything else — before safe mode, TOS,
+// analytics, terminal init, and regular plugins.
 // ==========================================
 (async () => {
     const earlyUrls = JSON.parse(localStorage.getItem("early_plugins") || "[]");
@@ -194,7 +191,7 @@ const ASCII_ART = `
 ╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝╚═╝  ╚═══╝╚══════╝╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚══════╝
 `;
 
-const VERSION_STRING = "v1.1 Build 3";
+const VERSION_STRING = "v1.1 Build idk";
 
 let tosVersionRemote = null;
 let tosContent = "";
@@ -313,13 +310,18 @@ async function handle(input) {
 
     // Confirmation prompt handler
     if (_awaitingConfirm) {
-        print(`\n> ${raw}`);
+        print('\n> ' + raw);
         const choice = raw.toLowerCase();
         if (choice === 'y') {
             const cb = _confirmCallback;
             _awaitingConfirm = false;
             _confirmCallback = null;
-            await cb();
+            await cb('y');
+        } else if (choice === 'd') {
+            const cb = _confirmCallback;
+            _awaitingConfirm = false;
+            _confirmCallback = null;
+            await cb('d');
         } else {
             print("Cancelled.");
             _awaitingConfirm = false;
@@ -411,34 +413,64 @@ async function handle(input) {
                     print(`<span class="dim">URL: ${args}</span>`, true);
 
                     if (requireEarlyload) {
-                        print(`<span class="danger-text">⚠ [BETA] This plugin requires early load — it will be added to early load plugins and run before everything on boot.</span>`, true);
+                        print('<span class="danger-text">⚠ [BETA] This plugin requires early load — it will run before everything on boot.</span>', true);
                     } else if (requestEarlyload) {
-                        print(`<span class="warning-text">⚠ [BETA] This plugin requests early load — it prefers to run before other plugins but does not require it.</span>`, true);
-                        print(`It will be added to early load plugins.`);
+                        print('<span class="warning-text">⚠ [BETA] This plugin requests early load — it prefers to run before other plugins but does not require it.</span>', true);
+                        print('<span class="dim">  y = install with early load  |  n = cancel  |  d = install without early load</span>', true);
                     }
 
                     if (permissions.length > 0) {
-                        print(`\nDetected capabilities:`, true);
+                        print('\nDetected capabilities:', true);
                         permissions.forEach(p => {
-                            print(`<span class="danger-text">  ⚠ ${p.label}</span>`, true);
+                            print('<span class="danger-text">  ⚠ ' + p.label + '</span>', true);
                         });
                     } else {
-                        print(`<span class="dim">No elevated capabilities detected.</span>`, true);
+                        print('<span class="dim">No elevated capabilities detected.</span>', true);
                     }
 
                     if (requires.length > 0) {
-                        print(`\nRequired dependencies:`, true);
-                        requires.forEach(dep => print(`<span class="dim">  - ${dep}</span>`, true));
-                        print(`Dependencies will be loaded automatically.`);
+                        print('\nRequired dependencies:', true);
+                        requires.forEach(dep => print('<span class="dim">  - ' + dep + '</span>', true));
+                        print('Dependencies will be loaded automatically.');
                     }
 
-                    print(`\nAdd this plugin? (y/n)`);
+                    print(requestEarlyload ? '\nAdd this plugin? (y/n/d)' : '\nAdd this plugin? (y/n)');
                     print("<hr>", true);
+
+                    // Store context for the confirm handler
+                    const _installUrl = args;
+                    const _isRequestEarly = requestEarlyload;
+                    const _isRequireEarly = requireEarlyload;
+
                     _awaitingConfirm = true;
-                    _confirmCallback = async () => {
-                        pluginUrls.push(args);
-                        setStorage("plugins", JSON.stringify(pluginUrls));
-                        print(`Added plugin: ${args}. Restart terminal to apply.`);
+                    _confirmCallback = async (choice) => {
+                        if (_isRequireEarly) {
+                            // Must go to early load
+                            const earlyUrls = JSON.parse(getStorage("early_plugins") || "[]");
+                            if (!earlyUrls.includes(_installUrl)) {
+                                earlyUrls.push(_installUrl);
+                                setStorage("early_plugins", JSON.stringify(earlyUrls));
+                            }
+                            print('Added to early load plugins: ' + _installUrl + '. Restart terminal to apply.');
+                        } else if (_isRequestEarly && choice === 'd') {
+                            // User chose to deny early load — install as regular plugin
+                            pluginUrls.push(_installUrl);
+                            setStorage("plugins", JSON.stringify(pluginUrls));
+                            print('Added plugin (without early load): ' + _installUrl + '. Restart terminal to apply.');
+                        } else if (_isRequestEarly) {
+                            // User accepted early load
+                            const earlyUrls = JSON.parse(getStorage("early_plugins") || "[]");
+                            if (!earlyUrls.includes(_installUrl)) {
+                                earlyUrls.push(_installUrl);
+                                setStorage("early_plugins", JSON.stringify(earlyUrls));
+                            }
+                            print('Added to early load plugins: ' + _installUrl + '. Restart terminal to apply.');
+                        } else {
+                            // Normal plugin
+                            pluginUrls.push(_installUrl);
+                            setStorage("plugins", JSON.stringify(pluginUrls));
+                            print('Added plugin: ' + _installUrl + '. Restart terminal to apply.');
+                        }
                     };
                 }
             } else if (subCmd === "list") {
@@ -496,7 +528,7 @@ async function handle(input) {
         case 'version':
             print("<hr>", true);
             printBanner();
-            print("Status: 1.1RC1");
+            print("Status: Stable");
             print("<hr>", true);
             break;
 
