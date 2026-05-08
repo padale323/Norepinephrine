@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>NoreOS Terminal</title>
+    <title>Norepinephrine Terminal</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -32,9 +32,9 @@
         #terminal-container {
             height: 100%;
             width: 100%;
-            max-width: 1024px;
+            max-width: 1400px;
             margin: 0 auto;
-            padding: 20px;
+            padding: 12px;
             display: flex;
             flex-direction: column;
             box-sizing: border-box;
@@ -45,7 +45,7 @@
 
         @media (min-width: 768px) {
             #terminal-container {
-                padding: 40px;
+                padding: 24px;
             }
         }
 
@@ -302,6 +302,7 @@
     const commands = {
         'installer': 'Launch the visual plugin installer.',
         'plugin': 'Manage plugins (add|list|remove|move).',
+        'loadplugins': 'Load standard plugins (manually).',
         'safemode': 'Reboot into safe mode (plugins skipped).',
         'version': 'Show current version info.',
         'changelog': 'Show recent updates.',
@@ -310,7 +311,7 @@
         'stats': 'View current users.',
         'enablebetafeatures': 'Switch to the beta channel.',
         'disablebetafeatures': 'Switch back to the stable channel.',
-        'reboot': 'Reloads NoreOS.',
+        'reboot': 'Reloads Norepinephrine.',
         'reinstall': 'Wipe all local data and reload fresh.',
         'clear': 'Clear screen.',
         'help': 'Show this menu.'
@@ -374,6 +375,12 @@
                 localStorage.setItem('tosver', tosVersionRemote);
                 print('TOS accepted.', 'success');
                 break;
+            case 'loadplugins':
+                print('Loading standard plugins...', 'system');
+                const sp = JSON.parse(localStorage.getItem('plugins') || '[]');
+                for (const url of sp) await loadPlugin(url);
+                print('Plugins loaded.', 'success');
+                break;
             case 'plugin':
                 const plugins = JSON.parse(localStorage.getItem('plugins') || '[]');
                 const earlyPlugins = JSON.parse(localStorage.getItem('early_plugins') || '[]');
@@ -402,17 +409,29 @@
                         print('<span class="warning-text">!! PLUGIN SECURITY WARNING !!</span>', true);
                         print('Verify source: ' + url);
                         if (found.length) found.forEach(f => print('<span class="danger-text"> ⚠ ' + f.label + ' detected</span>', true));
-                        if (reqEarly) print('<span class="danger-text"> ⚠ Requires Early Load</span>', true);
-                        print(`\nAdd plugin? (y/n${optEarly ? '/d' : ''})`);
+                        if (reqEarly) print('<span class="danger-text"> ⚠ Requires Early Load — runs before boot</span>', true);
+                        else if (optEarly) print('<span class="warning-text"> ⚠ Plugin requests Early Load</span>', true);
+
+                        if (requires.length) {
+                            print('\nDetected Dependencies:');
+                            requires.forEach(d => print('<span class="dim">  - ' + d + '</span>', true));
+                        }
+                        
+                        if (optEarly) {
+                            print('\nAdd this plugin?');
+                            print('<span class="dim">y = with early load | d = without early load | n = cancel</span>', true);
+                        } else {
+                            print('\nAdd this plugin? (y/n)');
+                        }
                         print('<hr>', true);
 
                         awaitingConfirm = async (choice) => {
-                            if (choice === 'y' || (optEarly && choice === 'd')) {
+                            if (choice === 'y' || choice === 'd') {
                                 const list = (reqEarly || (optEarly && choice === 'y')) ? 'early_plugins' : 'plugins';
                                 const cur = JSON.parse(localStorage.getItem(list) || '[]');
                                 cur.push(url);
                                 localStorage.setItem(list, JSON.stringify(cur));
-                                print('Added. Restart required.');
+                                print('Added. Restart required to apply changes.');
                             } else print('Cancelled.');
                         };
                     } catch(e) { print('Add Error: ' + e.message, 'error'); }
@@ -441,20 +460,15 @@
                 break;
             case 'changelog':
                 print('<hr>', true);
-                print('v1.1 Changes:', 'system');
-                print(' - NoreAPI: plugins can launch full-page apps via NoreAPI.launchApp().');
-                print(' - NoreAPI.onReady() hook — no race conditions between early load plugins.');
-                print(' - NoreAPI Screen API: getScreen, watchScreen, replaceLastLine, and more.');
-                print(' - Plugin install runs static analysis showing detected capabilities.');
-                print(' - Plugin dependencies via // @requires at top of plugin file.');
-                print(' - Early load plugins via // @require-earlyload or // @request-earlyload.');
-                print(' - plugin move <from> <to> to reorder plugin load order.');
-                print(' - Beta channel switching via enablebetafeatures / disablebetafeatures.');
-                print(' - Plugin add confirmation prompt with y/n/d for request-earlyload.');
-                print(' - Mobile improvements: dvh layout, iOS zoom fix, responsive ASCII banner.');
+                print('v1.1 Stable — Release Notes:', 'system');
+                print(' - NoreAPI v1.1: Standardized app environment with full Screen/IO hooks.');
+                print(' - UI: Modern "Norepinephrine" typography with fluid scale responsiveness.');
+                print(' - Plugins: New hybrid Early-Load system with Security Static Analysis.');
+                print(' - UX: Smart Tab Completion for all built-in and plugin commands.');
+                print(' - Reliability: Safe Mode (hold S on boot) and robust TOS auditing.');
                 print('<hr>', true);
                 break;
-            case 'version': print('<hr>', true); print('NoreOS Terminal v1.1\nChannel: Stable'); print('<hr>', true); break;
+            case 'version': print('<hr>', true); print('Norepinephrine Terminal v1.1\nChannel: Stable'); print('<hr>', true); break;
             case 'installer': localStorage.setItem('run_installer', 'true'); location.reload(); break;
             case 'reinstall': localStorage.clear(); location.reload(); break;
             case 'reboot': location.reload(); break;
@@ -526,7 +540,8 @@
             const p = JSON.parse(localStorage.getItem('plugins') || '[]');
             for (const url of [...ep, ...p]) await loadPlugin(url);
         } else {
-            print('!!! SAFE MODE ACTIVE !!!', 'error');
+            print('<span class="warning-text">!!! SAFE MODE ACTIVE !!! Plugins were not loaded.</span>', true);
+            print('<span class="dim">Use "loadplugins" to load them manually.</span>', true);
         }
 
         readyFired = true;
@@ -538,8 +553,27 @@
 
     tin.addEventListener('keydown', e => {
         if (e.key === 'Enter') { handle(tin.value); tin.value = ''; }
-        else if (e.key === 'ArrowUp') { histIdx = Math.max(0, histIdx - 1); tin.value = history[histIdx] || ''; }
-        else if (e.key === 'ArrowDown') { histIdx = Math.min(history.length, histIdx + 1); tin.value = history[histIdx] || ''; }
+        else if (e.key === 'ArrowUp') { 
+            e.preventDefault();
+            histIdx = Math.max(0, histIdx - 1); 
+            tin.value = history[histIdx] || ''; 
+        }
+        else if (e.key === 'ArrowDown') { 
+            e.preventDefault();
+            histIdx = Math.min(history.length, histIdx + 1); 
+            tin.value = history[histIdx] || ''; 
+        }
+        else if (e.key === 'Tab') {
+            e.preventDefault();
+            const val = tin.value.trim().toLowerCase();
+            if (!val) return;
+            const pool = [...Object.keys(commands), ...Object.keys(window.customCommands)].sort();
+            const matches = pool.filter(c => c.startsWith(val));
+            if (matches.length === 1) tin.value = matches[0];
+            else if (matches.length > 1) {
+                print('\nSuggestions: ' + matches.join(', '), true);
+            }
+        }
     });
     document.addEventListener('click', () => tin.focus());
 </script>
