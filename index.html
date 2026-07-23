@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Norepinephrine</title>
+<title>Norepinephrine Kernel</title>
 <style>
   html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #ccc; overflow: hidden; font-family: monospace; }
   #root { position: fixed; inset: 0; }
 
-  /* Recovery shell — plain text only, no theming. Off by default. */
+  /* Recovery shell */
   #recovery {
     display: none;
     position: fixed; inset: 0;
@@ -27,7 +27,7 @@
     display: none;
     position: fixed; inset: 0;
     background: rgba(0, 0, 0, 0.85);
-    z-index: 999999; /* Highest priority, cannot be covered by apps */
+    z-index: 999999;
     align-items: center; justify-content: center;
     backdrop-filter: blur(4px);
   }
@@ -58,11 +58,10 @@
   <div>&gt; <input id="recovery-in" autocomplete="off" spellcheck="false" style="width:80%"></div>
 </div>
 
-<!-- Kernel Security Prompt UI -->
 <div id="secure-overlay">
   <div class="secure-box">
     <h2>System Security Alert</h2>
-    <p id="secure-msg">An application is requesting access to a secure key.</p>
+    <p id="secure-msg">An application is requesting access to a secure resource.</p>
     <div>
       <button id="secure-deny">DENY</button>
       <button id="secure-allow" class="allow">ALLOW</button>
@@ -73,14 +72,14 @@
 <script>
 (function () {
   'use strict';
-  const VERSION = '2.1.0';
+  const VERSION = '3.0.0';
   const root = document.getElementById('root');
   const rec = document.getElementById('recovery');
   const recOut = document.getElementById('recovery-out');
   const recIn = document.getElementById('recovery-in');
 
   // ---------------------------------------------------------------
-  // STORAGE
+  // KERNEL STORAGE & HWID
   // ---------------------------------------------------------------
   const storage = {
     get: (k) => localStorage.getItem(k),
@@ -97,54 +96,205 @@
   })();
 
   // ---------------------------------------------------------------
-  // VIRTUAL FILE SYSTEM (Cookie FS)
-  // A hierarchical file system built on top of localStorage.
+  // INDEXEDDB VIRTUAL FILE SYSTEM (Strict /root/ scoping & formatting)
   // ---------------------------------------------------------------
-  const fsData = storage.getJSON('nore_vfs', {});
-  const saveFS = () => storage.setJSON('nore_vfs', fsData);
-  
+  let db = null;
+  const initVFSDB = () => new Promise((resolve, reject) => {
+    const req = indexedDB.open('NorepinephrineVFS', 1);
+    req.onupgradeneeded = (e) => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains('files')) {
+        d.createObjectStore('files', { keyPath: 'path' });
+      }
+    };
+    req.onsuccess = (e) => { db = e.target.result; resolve(db); };
+    req.onerror = (e) => reject('Failed to open IndexedDB VFS');
+  });
+
   const vfs = {
     _normalize: (path) => {
-      if (!path.startsWith('/')) path = '/' + path;
-      return path.replace(/\/+/g, '/'); // remove double slashes
+      if (!path) path = '/root/';
+      if (!path.startsWith('/root')) {
+        path = '/root/' + path.replace(/^\/+/, '');
+      }
+      return path.replace(/\/+/g, '/');
     },
-    exists: (path) => vfs._normalize(path) in fsData,
-    read: (path) => fsData[vfs._normalize(path)] || null,
-    write: (path, data) => { fsData[vfs._normalize(path)] = data; saveFS(); },
-    remove: (path) => { delete fsData[vfs._normalize(path)]; saveFS(); },
-    list: (dir) => {
-      let d = vfs._normalize(dir);
-      if (!d.endsWith('/')) d += '/';
-      const items = new Set();
-      Object.keys(fsData).forEach(k => {
-        if (k.startsWith(d) && k !== d) {
-          const relative = k.slice(d.length);
-          const slashIndex = relative.indexOf('/');
-          if (slashIndex === -1) items.add(relative); // File
-          else items.add(relative.slice(0, slashIndex) + '/'); // Directory
+
+    // Format handling based on file extensions
+    _formatData: (path, content, mode = 'write') => {
+      if (mode === 'write') {
+        if (path.endsWith('.json') && typeof content !== 'string') {
+          return JSON.stringify(content, null, 2);
         }
-      });
-      return Array.from(items).sort();
+        return content;
+      } else {
+        if (path.endsWith('.json') && typeof content === 'string') {
+          try { return JSON.parse(content); } catch (e) { return content; }
+        }
+        return content;
+      }
+    },
+
+    mkdir: (path) => new Promise((resolve, reject) => {
+      const norm = vfs._normalize(path);
+      const tx = db.transaction('files', 'readwrite');
+      const store = tx.objectStore('files');
+      const node = { path: norm, type: 'dir', created: Date.now(), updated: Date.now() };
+      const req = store.put(node);
+      req.onsuccess = () => resolve(true);
+      req.onerror = () => reject('Failed to create directory');
+    }),
+
+    write: (path, content) => new Promise((resolve, reject) => {
+      const norm = vfs._normalize(path);
+      const formatted = vfs._formatData(norm, content, 'write');
+      const tx = db.transaction('files', 'readwrite');
+      const store = tx.objectStore('files');
+      const node = { path: norm, type: 'file', content: formatted, updated: Date.now() };
+      const req = store.put(node);
+      req.onsuccess = () => resolve(true);
+      req.onerror = () => reject('Failed to write file');
+    }),
+
+    read: (path) => new Promise((resolve, reject) => {
+      const norm = vfs._normalize(path);
+      const tx = db.transaction('files', 'readonly');
+      const store = tx.objectStore('files');
+      const req = store.get(norm);
+      req.onsuccess = () => {
+        if (!req.result) return resolve(null);
+        if (req.result.type === 'dir') return resolve('[Directory]');
+        resolve(vfs._formatData(norm, req.result.content, 'read'));
+      };
+      req.onerror = () => reject('Failed to read file');
+    }),
+
+    remove: (path) => new Promise((resolve, reject) => {
+      const norm = vfs._normalize(path);
+      const tx = db.transaction('files', 'readwrite');
+      const store = tx.objectStore('files');
+      const req = store.delete(norm);
+      req.onsuccess = () => resolve(true);
+      req.onerror = () => reject('Failed to remove node');
+    }),
+
+    list: (dir = '/root/') => new Promise((resolve, reject) => {
+      let norm = vfs._normalize(dir);
+      if (!norm.endsWith('/')) norm += '/';
+      const tx = db.transaction('files', 'readonly');
+      const store = tx.objectStore('files');
+      const req = store.getAllKeys();
+      req.onsuccess = () => {
+        const items = new Set();
+        req.result.forEach(k => {
+          if (k.startsWith(norm) && k !== norm) {
+            const relative = k.slice(norm.length);
+            const slashIndex = relative.indexOf('/');
+            if (slashIndex === -1) items.add(relative);
+            else items.add(relative.slice(0, slashIndex) + '/');
+          }
+        });
+        resolve(Array.from(items).sort());
+      };
+      req.onerror = () => reject('Failed to list directory');
+    })
+  };
+
+  // ---------------------------------------------------------------
+  // PROCESS SCHEDULER & PID MANAGER
+  // ---------------------------------------------------------------
+  let nextPID = 100;
+  const processTable = new Map();
+
+  class Process {
+    constructor(name, execFn, parentPID = 0) {
+      this.pid = nextPID++;
+      this.name = name;
+      this.parentPID = parentPID;
+      this.state = 'RUNNING';
+      this.execFn = execFn;
+      this.stdin = [];
+      this.stdout = [];
+      this.stderr = [];
+      this.ipcListeners = [];
+    }
+
+    sendSignal(sig) {
+      switch (sig) {
+        case 'SIGKILL':
+        case 'SIGTERM':
+          this.state = 'ZOMBIE';
+          processTable.delete(this.pid);
+          events.emit('process-terminated', this.pid);
+          break;
+        case 'SIGSTOP':
+          this.state = 'SUSPENDED';
+          break;
+        case 'SIGCONT':
+          this.state = 'RUNNING';
+          break;
+      }
+    }
+  }
+
+  const pids = {
+    spawn: (name, execFn, parentPID = 0) => {
+      const proc = new Process(name, execFn, parentPID);
+      processTable.set(proc.pid, proc);
+      events.emit('process-spawned', { pid: proc.pid, name });
+      try {
+        proc.execFn(proc);
+      } catch (e) {
+        proc.stderr.push(e.message);
+        proc.sendSignal('SIGKILL');
+      }
+      return proc.pid;
+    },
+    kill: (pid, signal = 'SIGTERM') => {
+      const proc = processTable.get(pid);
+      if (proc) {
+        proc.sendSignal(signal);
+        return true;
+      }
+      return false;
+    },
+    list: () => Array.from(processTable.values()).map(p => ({ pid: p.pid, name: p.name, state: p.state, ppid: p.parentPID }))
+  };
+
+  // ---------------------------------------------------------------
+  // INTER-PROCESS COMMUNICATION (IPC)
+  // ---------------------------------------------------------------
+  const ipc = {
+    send: (targetPID, channel, data) => {
+      const proc = processTable.get(targetPID);
+      if (proc && proc.state === 'RUNNING') {
+        proc.ipcListeners.forEach(cb => cb({ channel, data, sender: targetPID }));
+        return true;
+      }
+      return false;
+    },
+    listen: (pid, callback) => {
+      const proc = processTable.get(pid);
+      if (proc) {
+        proc.ipcListeners.push(callback);
+      }
     }
   };
 
   // ---------------------------------------------------------------
-  // SECURE KEYS SYSTEM (Web Crypto API)
+  // SECURE KEYS SYSTEM
   // ---------------------------------------------------------------
   let masterCryptoKey = null;
-  const sessionApprovals = new Set(); // Tracks keys approved this boot session
+  const sessionApprovals = new Set();
 
-  // UI elements for the permission prompt
   const secOverlay = document.getElementById('secure-overlay');
   const secMsg = document.getElementById('secure-msg');
   const btnAllow = document.getElementById('secure-allow');
   const btnDeny = document.getElementById('secure-deny');
 
-  // Initialize WebCrypto master key
   async function initCrypto() {
     let rawJwk = storage.getJSON('nore_master_jwk', null);
     if (!rawJwk) {
-      // Generate AES-GCM 256-bit key on first run
       masterCryptoKey = await crypto.subtle.generateKey(
         { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]
       );
@@ -157,11 +307,9 @@
     }
   }
 
-  // Ask user permission via UI prompt
-  function requestUserPermission(keyName) {
+  function requestUserPermission(msg) {
     return new Promise(resolve => {
-      if (sessionApprovals.has(keyName)) return resolve(true);
-      secMsg.innerHTML = `An environment or plugin is requesting access to the secure system key:<br><br><b style="color:#fff">${keyName}</b><br><br>Allow access for this session?`;
+      secMsg.innerHTML = msg;
       secOverlay.style.display = 'flex';
       
       const cleanup = () => {
@@ -169,59 +317,57 @@
         secOverlay.style.display = 'none';
       };
 
-      btnAllow.onclick = () => { sessionApprovals.add(keyName); cleanup(); resolve(true); };
+      btnAllow.onclick = () => { cleanup(); resolve(true); };
       btnDeny.onclick = () => { cleanup(); resolve(false); };
     });
   }
 
-  // ArrayBuffer <-> Base64 helpers for localStorage
   const bufToBase64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
   const base64ToBuf = (b64) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
 
   const secureKeys = {
-    // Check if the current session already has access
-    hasAccess: (keyName) => sessionApprovals.has(keyName),
-    
-    // Explicitly prompt for access
-    requestAccess: async (keyName) => await requestUserPermission(keyName),
-
-    // Read and decrypt a secure key (Prompts if not previously approved)
     read: async (keyName) => {
-      const allowed = await requestUserPermission(keyName);
-      if (!allowed) throw new Error("User denied access to secure key: " + keyName);
-      
+      if (!sessionApprovals.has(keyName)) {
+        const allowed = await requestUserPermission(`Access requested to secure key:<br><br><b style="color:#fff">${keyName}</b>`);
+        if (!allowed) throw new Error("Denied secure key: " + keyName);
+        sessionApprovals.add(keyName);
+      }
       const payload = storage.getJSON(`nore_vault_${keyName}`, null);
       if (!payload) return null;
-      
-      try {
-        const iv = base64ToBuf(payload.iv);
-        const data = base64ToBuf(payload.data);
-        const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, masterCryptoKey, data);
-        return new TextDecoder().decode(decrypted);
-      } catch (e) {
-        throw new Error("Failed to decrypt secure key (corrupted or altered).");
-      }
+      const iv = base64ToBuf(payload.iv);
+      const data = base64ToBuf(payload.data);
+      const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, masterCryptoKey, data);
+      return new TextDecoder().decode(decrypted);
     },
-
-    // Encrypt and write to a secure key (Prompts if not previously approved)
     write: async (keyName, value) => {
-      const allowed = await requestUserPermission(keyName);
-      if (!allowed) throw new Error("User denied access to secure key: " + keyName);
-
+      if (!sessionApprovals.has(keyName)) {
+        const allowed = await requestUserPermission(`Write access requested to secure key:<br><br><b style="color:#fff">${keyName}</b>`);
+        if (!allowed) throw new Error("Denied secure key: " + keyName);
+        sessionApprovals.add(keyName);
+      }
       const iv = crypto.getRandomValues(new Uint8Array(12));
       const encoded = new TextEncoder().encode(value);
       const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, masterCryptoKey, encoded);
-      
-      storage.setJSON(`nore_vault_${keyName}`, {
-        iv: bufToBase64(iv),
-        data: bufToBase64(encrypted)
-      });
+      storage.setJSON(`nore_vault_${keyName}`, { iv: bufToBase64(iv), data: bufToBase64(encrypted) });
       return true;
     }
   };
 
   // ---------------------------------------------------------------
-  // EVENT BUS
+  // SYSCALL SECURITY GATEWAY
+  // ---------------------------------------------------------------
+  const syscalls = {
+    read: (path) => vfs.read(path),
+    write: (path, data) => vfs.write(path, data),
+    mkdir: (path) => vfs.mkdir(path),
+    spawn: (name, fn, ppid) => pids.spawn(name, fn, ppid),
+    kill: (pid, sig) => pids.kill(pid, sig),
+    ipcSend: (pid, channel, data) => ipc.send(pid, channel, data),
+    requestPermission: (reason) => requestUserPermission(reason)
+  };
+
+  // ---------------------------------------------------------------
+  // EVENT BUS & CONFIG
   // ---------------------------------------------------------------
   const listeners = {};
   const events = {
@@ -230,39 +376,21 @@
     emit: (name, data) => { (listeners[name] || []).forEach((fn) => { try { fn(data); } catch (e) { console.error('[Kernel event error]', name, e); } }); }
   };
 
-  // ---------------------------------------------------------------
-  // CONFIG
-  // ---------------------------------------------------------------
   const config = storage.getJSON('nore_config', { environment: null, plugins: [], early_plugins: [] });
   const saveConfig = () => storage.setJSON('nore_config', config);
 
   // ---------------------------------------------------------------
-  // COMMAND REGISTRY
+  // REGISTRIES
   // ---------------------------------------------------------------
   const commandRegistry = {};
-  const registerCommand = (name, description, fn, source = 'kernel') => {
-    commandRegistry[name.toLowerCase()] = { description, fn, source };
-  };
-  const unregisterCommand = (name) => { delete commandRegistry[name.toLowerCase()]; };
-  const call = (name, ...args) => {
-    const c = commandRegistry[name.toLowerCase()];
-    if (!c) throw new Error('Unknown command: ' + name);
-    return c.fn(...args);
-  };
+  const registerCommand = (name, description, fn) => { commandRegistry[name.toLowerCase()] = { description, fn }; };
 
-  // ---------------------------------------------------------------
-  // APP REGISTRY
-  // ---------------------------------------------------------------
   const appRegistry = {};
   const registerApp = (id, meta) => {
-    appRegistry[id] = { id, name: meta.name || id, icon: meta.icon || '', description: meta.description || '', launch: meta.launch };
+    appRegistry[id] = { id, name: meta.name || id, icon: meta.icon || '', launch: meta.launch };
     events.emit('app-registered', id);
   };
-  const unregisterApp = (id) => { delete appRegistry[id]; events.emit('app-unregistered', id); };
 
-  // ---------------------------------------------------------------
-  // TOS
-  // ---------------------------------------------------------------
   const tos = {
     content: '',
     version: '104',
@@ -270,151 +398,55 @@
     accept() { storage.set('tosver', this.version); events.emit('tos-accepted'); }
   };
 
-  let stats = { active: '?' };
-
-  // ---------------------------------------------------------------
-  // PLUGIN / ENVIRONMENT LOADER
-  // ---------------------------------------------------------------
-  const loadedPlugins = new Set();
-  async function loadPlugin(url) {
-    if (loadedPlugins.has(url)) return;
-    try {
-      const r = await fetch(url + '?t=' + Date.now());
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const code = await r.text();
-      const deps = [...code.matchAll(/\/\/ @requires\s+(.*)/g)].map((m) => m[1].trim());
-      for (const d of deps) await loadPlugin(d);
-      new Function('Kernel', code)(window.Kernel);
-      loadedPlugins.add(url);
-      events.emit('plugin-loaded', url);
-    } catch (e) {
-      events.emit('plugin-error', { url, message: e.message });
-    }
-  }
-
-  const ENV_TIMEOUT_MS = 10000;
-  async function loadEnvironment(url) {
-    if (!url) return;
-    if (!tos.accepted) {
-      events.emit('environment-error', { url, message: 'Terms of Service not accepted.' });
-      return;
-    }
-    root.innerHTML = '';
-    let settled = false;
-
-    const fail = (reason) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      events.emit('environment-error', { url, message: reason });
-      config.environment = null;
-      saveConfig();
-      storage.set('nore_recovery_reason', 'Environment failed: ' + reason);
-      location.reload();
-    };
-    const ready = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      events.emit('environment-loaded', url);
-    };
-    const timer = setTimeout(() => fail('did not confirm ready within ' + (ENV_TIMEOUT_MS / 1000) + 's'), ENV_TIMEOUT_MS);
-
-    try {
-      const r = await fetch(url + '?t=' + Date.now());
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const code = await r.text();
-      if (!code.trim()) throw new Error('environment file is empty');
-      new Function('Kernel', 'ready', code)(window.Kernel, ready);
-    } catch (e) {
-      fail(e.message);
-    }
-  }
-
   // ---------------------------------------------------------------
   // BUILT-IN COMMANDS
   // ---------------------------------------------------------------
-  registerCommand('help', 'List all available commands.', () =>
-    Object.entries(commandRegistry)
-      .map(([name, c]) => `${name} — ${c.description}`)
-      .join('\n'));
-
-  registerCommand('version', 'Norepinephrine version info.', () => ({ version: VERSION }));
-  registerCommand('reboot', 'Reload the kernel.', () => location.reload());
-  registerCommand('wipe', 'Wipe all local data (config, plugins, history, VFS) and reload.', () => { localStorage.clear(); location.reload(); });
-  registerCommand('safemode', 'Reboot straight to recovery.', () => { location.href = location.pathname + '?safe=true'; });
-  
-  registerCommand('setenv', 'Set the active environment URL.', (url) => {
-    config.environment = url || null; saveConfig(); return 'Environment set. Reboot to apply.';
-  });
-  registerCommand('getenv', 'Get the active environment URL.', () => config.environment);
-
-  registerCommand('tos', 'Get Terms of Service content.', () => tos.content || 'TOS not loaded yet.');
-  registerCommand('accept', 'Accept the current Terms of Service.', () => { tos.accept(); return 'Accepted.'; });
-
-  // VFS Commands
-  registerCommand('ls', 'List files in VFS directory. Usage: ls <path>', (path = '/') => vfs.list(path).join('\n') || '(empty)');
-  registerCommand('touch', 'Create or overwrite a file. Usage: touch <path> [content]', (path, ...content) => { vfs.write(path, content.join(' ')); return 'File saved.'; });
-  registerCommand('cat', 'Read a file. Usage: cat <path>', (path) => { const f = vfs.read(path); return f === null ? 'File not found.' : f; });
-  registerCommand('rm', 'Delete a file. Usage: rm <path>', (path) => { vfs.remove(path); return 'Removed.'; });
-
-  // Keys Commands
-  registerCommand('keys.write', 'Securely encrypt data. Usage: keys.write <keyName> <value>', async (key, ...val) => {
-    await secureKeys.write(key, val.join(' ')); return `Saved to secure vault: ${key}`;
-  });
-  registerCommand('keys.read', 'Read decrypted data. Usage: keys.read <keyName>', async (key) => {
-    const val = await secureKeys.read(key); return val === null ? 'Key not found.' : val;
-  });
+  registerCommand('help', 'List commands.', () => Object.entries(commandRegistry).map(([n, c]) => `${n} — ${c.description}`).join('\n'));
+  registerCommand('version', 'Norepinephrine version.', () => ({ version: VERSION }));
+  registerCommand('reboot', 'Reload kernel.', () => location.reload());
+  registerCommand('ps', 'List processes.', () => pids.list());
+  registerCommand('kill', 'Kill process PID.', (pid) => pids.kill(parseInt(pid, 10)) ? 'Killed.' : 'Process not found.');
+  registerCommand('ls', 'List directory files. Usage: ls [path]', async (path = '/root/') => (await vfs.list(path)).join('\n') || '(empty)');
+  registerCommand('touch', 'Write a file. Usage: touch <path> [content]', async (path, ...content) => { await vfs.write(path, content.join(' ')); return 'File written.'; });
+  registerCommand('cat', 'Read a file. Usage: cat <path>', async (path) => { const f = await vfs.read(path); return f === null ? 'File not found.' : f; });
 
   // ---------------------------------------------------------------
-  // PUBLIC KERNEL API
+  // PUBLIC KERNEL EXPOSE
   // ---------------------------------------------------------------
-  let readyFired = false;
-  const readyCallbacks = [];
   window.Kernel = {
     version: VERSION,
     hwid,
     root,
     storage,
-    vfs,             // Expose Cookie FS
-    keys: secureKeys, // Expose Secure Crypto Storage
+    vfs,
+    pids,
+    ipc,
+    sys: syscalls,
+    keys: secureKeys,
     events,
     tos,
-    get stats() { return stats; },
     config: { get: () => JSON.parse(JSON.stringify(config)), save: saveConfig },
     commands: commandRegistry,
     registerCommand,
-    unregisterCommand,
-    call,
     apps: appRegistry,
     registerApp,
-    unregisterApp,
-    loadPlugin,
-    loadEnvironment,
-    run: (line) => execCommandLine(line, (t) => console.log(t)),
-    onReady: (fn) => { readyFired ? fn() : readyCallbacks.push(fn); },
-    _loadedPlugins: loadedPlugins
+    run: (line) => execCommandLine(line, (t) => console.log(t))
   };
 
   // ---------------------------------------------------------------
-  // RECOVERY SHELL
+  // RECOVERY & BOOT
   // ---------------------------------------------------------------
   function recPrint(t) {
     const d = document.createElement('div');
-    d.className = 'line';
     d.textContent = t;
     recOut.appendChild(d);
     rec.scrollTop = rec.scrollHeight;
   }
+
   function enterRecovery(reason) {
-    if (rec.classList.contains('active')) return;
     rec.classList.add('active');
-    recPrint('Norepinephrine recovery — v' + VERSION);
-    recPrint('If you are seeing this, something went wrong, or you haven\'t configured Norepinephrine yet.');
-    const stored = storage.get('nore_recovery_reason');
-    if (stored) { recPrint(stored); storage.remove('nore_recovery_reason'); }
+    recPrint(`Norepinephrine Recovery Shell v${VERSION}`);
     if (reason) recPrint(reason);
-    recPrint('Type "help" for commands.');
     recIn.focus();
   }
 
@@ -422,8 +454,6 @@
     const trimmed = (line || '').trim();
     if (!trimmed) return;
     printFn('> ' + trimmed);
-    
-    // Simple parser for quotes and spaces
     const args = trimmed.match(/(?:[^\s"]+|"[^"]*")+/g).map(s => s.replace(/(^"|"$)/g, ''));
     const name = args.shift();
 
@@ -432,60 +462,33 @@
     try {
       const result = await c.fn(...args);
       if (result !== undefined) printFn(typeof result === 'string' ? result : JSON.stringify(result, null, 2));
-      return result;
     } catch (err) { printFn('Error: ' + err.message); }
   }
 
   recIn.addEventListener('keydown', async (e) => {
-    if (e.key !== 'Enter') return;
-    const val = recIn.value; recIn.value = '';
-    await execCommandLine(val, recPrint);
+    if (e.key === 'Enter') {
+      const val = recIn.value; recIn.value = '';
+      await execCommandLine(val, recPrint);
+    }
   });
-  document.addEventListener('click', () => { if (rec.classList.contains('active')) recIn.focus(); });
 
-  let rCount = 0;
-  const rCheck = (e) => { if (e.key.toLowerCase() === 'r') { rCount++; if (rCount >= 5) { window.removeEventListener('keydown', rCheck); enterRecovery('(forced open via key sequence)'); } } };
-  window.addEventListener('keydown', rCheck);
-  setTimeout(() => window.removeEventListener('keydown', rCheck), 8000);
-
-  // ---------------------------------------------------------------
-  // BOOT SEQUENCE
-  // ---------------------------------------------------------------
   window.addEventListener('load', async () => {
-    // 1. Initialize core cryptography for Keys system before booting environments
+    await initVFSDB();
     await initCrypto();
+    await vfs.mkdir('/root/');
 
-    const params = new URLSearchParams(location.search);
-    const safe = params.has('safe');
-    const forceRecovery = params.has('recovery');
+    if (!config.environment) {
+      enterRecovery('No OS environment registered. Use "setenv <url>" to pair with Axon.');
+      return;
+    }
 
     try {
-      const r = await fetch('https://raw.githubusercontent.com/Norepinephrine-Tools/Terms/refs/heads/main/TOS.txt');
-      tos.content = await r.text();
-      tos.version = (tos.content.match(/tosver\s*=\s*(\d+)/i) || [null, '104'])[1];
-    } catch (e) {}
-    const sync = async () => {
-      try {
-        const r = await fetch('https://script.google.com/macros/s/AKfycbyTb30dK2Olw4fvCb5yD4YwoVTuHpKyBfzzJ83GsZ_9hTWvwRPqTC3iIb--JMTV0tJxHA/exec?hwid=' + hwid);
-        stats = await r.json();
-        events.emit('stats', stats);
-      } catch (e) {}
-    };
-    sync(); setInterval(sync, 60000);
-
-    if (forceRecovery) { enterRecovery(); readyFired = true; for (const fn of readyCallbacks) await fn(); return; }
-    if (safe) { enterRecovery('Safe mode: plugins were not loaded.'); readyFired = true; for (const fn of readyCallbacks) await fn(); return; }
-    if (!config.environment) { enterRecovery(); readyFired = true; for (const fn of readyCallbacks) await fn(); return; }
-    if (!tos.accepted) { enterRecovery('Terms of Service not accepted. Type "tos" then "accept", then "reboot".'); readyFired = true; for (const fn of readyCallbacks) await fn(); return; }
-
-    for (const url of config.early_plugins) await loadPlugin(url);
-
-    readyFired = true;
-    for (const fn of readyCallbacks) await fn();
-
-    for (const url of config.plugins) await loadPlugin(url);
-
-    await loadEnvironment(config.environment);
+      const r = await fetch(config.environment + '?t=' + Date.now());
+      const code = await r.text();
+      new Function('Kernel', 'ready', code)(window.Kernel, () => events.emit('environment-loaded'));
+    } catch (e) {
+      enterRecovery('Failed to boot environment: ' + e.message);
+    }
   });
 })();
 </script>
