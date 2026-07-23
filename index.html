@@ -137,6 +137,10 @@
   const ENV_TIMEOUT_MS = 10000;
   async function loadEnvironment(url) {
     if (!url) return;
+    if (!tos.accepted) {
+      events.emit('environment-error', { url, message: 'Terms of Service not accepted.' });
+      return;
+    }
     root.innerHTML = '';
     let settled = false;
 
@@ -173,9 +177,11 @@
   // BUILT-IN COMMANDS  (every environment gets these for free)
   // ---------------------------------------------------------------
   registerCommand('help', 'List all available commands.', () =>
-    Object.entries(commandRegistry).map(([name, c]) => ({ name, description: c.description, source: c.source })));
+    Object.entries(commandRegistry)
+      .map(([name, c]) => `${name} — ${c.description}`)
+      .join('\n'));
 
-  registerCommand('version', 'Kernel version info.', () => ({ version: VERSION }));
+  registerCommand('version', 'Norepinephrine version info.', () => ({ version: VERSION }));
   registerCommand('reboot', 'Reload the kernel.', () => location.reload());
   registerCommand('wipe', 'Wipe all local data (config, plugins, history) and reload.', () => { localStorage.clear(); location.reload(); });
   registerCommand('safemode', 'Reboot with plugins and environment skipped, straight to recovery.', () => { location.href = location.pathname + '?safe=true'; });
@@ -322,14 +328,13 @@
     const safe = params.has('safe');
     const forceRecovery = params.has('recovery');
 
-    // TOS + analytics run silently in the background regardless of UI.
-    (async () => {
-      try {
-        const r = await fetch('https://raw.githubusercontent.com/Norepinephrine-Tools/Terms/refs/heads/main/TOS.txt');
-        tos.content = await r.text();
-        tos.version = (tos.content.match(/tosver\s*=\s*(\d+)/i) || [null, '104'])[1];
-      } catch (e) {}
-    })();
+    // TOS is awaited (not fire-and-forget) because environment loading
+    // is gated on it below. Analytics stays fire-and-forget.
+    try {
+      const r = await fetch('https://raw.githubusercontent.com/Norepinephrine-Tools/Terms/refs/heads/main/TOS.txt');
+      tos.content = await r.text();
+      tos.version = (tos.content.match(/tosver\s*=\s*(\d+)/i) || [null, '104'])[1];
+    } catch (e) {}
     const sync = async () => {
       try {
         const r = await fetch('https://script.google.com/macros/s/AKfycbyTb30dK2Olw4fvCb5yD4YwoVTuHpKyBfzzJ83GsZ_9hTWvwRPqTC3iIb--JMTV0tJxHA/exec?hwid=' + hwid);
@@ -339,11 +344,13 @@
     };
     sync(); setInterval(sync, 60000);
 
-    // Recovery never loads plugins — forced recovery, safe mode, and
-    // "no environment configured" all skip straight past the loader.
+    // Recovery never loads plugins — forced recovery, safe mode,
+    // "no environment configured", and "TOS not accepted" all skip
+    // straight past the loader.
     if (forceRecovery) { enterRecovery(); readyFired = true; for (const fn of readyCallbacks) await fn(); return; }
     if (safe) { enterRecovery('Safe mode: plugins were not loaded.'); readyFired = true; for (const fn of readyCallbacks) await fn(); return; }
     if (!config.environment) { enterRecovery(); readyFired = true; for (const fn of readyCallbacks) await fn(); return; }
+    if (!tos.accepted) { enterRecovery('Terms of Service not accepted. Type "tos" then "accept", then "reboot".'); readyFired = true; for (const fn of readyCallbacks) await fn(); return; }
 
     for (const url of config.early_plugins) await loadPlugin(url);
 
