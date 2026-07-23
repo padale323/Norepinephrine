@@ -72,7 +72,7 @@
 <script>
 (function () {
   'use strict';
-  const VERSION = '3.0.0';
+  const VERSION = '3.1.0';
   const root = document.getElementById('root');
   const rec = document.getElementById('recovery');
   const recOut = document.getElementById('recovery-out');
@@ -96,7 +96,7 @@
   })();
 
   // ---------------------------------------------------------------
-  // INDEXEDDB VIRTUAL FILE SYSTEM (Strict /root/ scoping & formatting)
+  // INDEXEDDB VIRTUAL FILE SYSTEM
   // ---------------------------------------------------------------
   let db = null;
   const initVFSDB = () => new Promise((resolve, reject) => {
@@ -108,7 +108,7 @@
       }
     };
     req.onsuccess = (e) => { db = e.target.result; resolve(db); };
-    req.onerror = (e) => reject('Failed to open IndexedDB VFS');
+    req.onerror = () => reject('Failed to open IndexedDB VFS');
   });
 
   const vfs = {
@@ -120,7 +120,6 @@
       return path.replace(/\/+/g, '/');
     },
 
-    // Format handling based on file extensions
     _formatData: (path, content, mode = 'write') => {
       if (mode === 'write') {
         if (path.endsWith('.json') && typeof content !== 'string') {
@@ -380,7 +379,7 @@
   const saveConfig = () => storage.setJSON('nore_config', config);
 
   // ---------------------------------------------------------------
-  // REGISTRIES
+  // REGISTRIES & TOS
   // ---------------------------------------------------------------
   const commandRegistry = {};
   const registerCommand = (name, description, fn) => { commandRegistry[name.toLowerCase()] = { description, fn }; };
@@ -399,12 +398,25 @@
   };
 
   // ---------------------------------------------------------------
-  // BUILT-IN COMMANDS
+  // BUILT-IN COMMANDS (Restored setenv, getenv, wipe, safemode, etc.)
   // ---------------------------------------------------------------
   registerCommand('help', 'List commands.', () => Object.entries(commandRegistry).map(([n, c]) => `${n} — ${c.description}`).join('\n'));
   registerCommand('version', 'Norepinephrine version.', () => ({ version: VERSION }));
   registerCommand('reboot', 'Reload kernel.', () => location.reload());
-  registerCommand('ps', 'List processes.', () => pids.list());
+  registerCommand('safemode', 'Reboot straight to recovery.', () => { location.href = location.pathname + '?safe=true'; });
+  registerCommand('wipe', 'Wipe local data and reload.', () => { localStorage.clear(); indexedDB.deleteDatabase('NorepinephrineVFS'); location.reload(); });
+  
+  registerCommand('setenv', 'Set active environment URL. Usage: setenv <url>', (url) => {
+    config.environment = url || null;
+    saveConfig();
+    return 'Environment set. Type "reboot" to boot into it.';
+  });
+  registerCommand('getenv', 'Get active environment URL.', () => config.environment || 'None set');
+
+  registerCommand('tos', 'View Terms of Service.', () => tos.content || 'TOS not loaded.');
+  registerCommand('accept', 'Accept Terms of Service.', () => { tos.accept(); return 'TOS accepted.'; });
+
+  registerCommand('ps', 'List active processes.', () => pids.list());
   registerCommand('kill', 'Kill process PID.', (pid) => pids.kill(parseInt(pid, 10)) ? 'Killed.' : 'Process not found.');
   registerCommand('ls', 'List directory files. Usage: ls [path]', async (path = '/root/') => (await vfs.list(path)).join('\n') || '(empty)');
   registerCommand('touch', 'Write a file. Usage: touch <path> [content]', async (path, ...content) => { await vfs.write(path, content.join(' ')); return 'File written.'; });
@@ -434,7 +446,7 @@
   };
 
   // ---------------------------------------------------------------
-  // RECOVERY & BOOT
+  // RECOVERY & BOOT SEQUENCE
   // ---------------------------------------------------------------
   function recPrint(t) {
     const d = document.createElement('div');
@@ -447,6 +459,7 @@
     rec.classList.add('active');
     recPrint(`Norepinephrine Recovery Shell v${VERSION}`);
     if (reason) recPrint(reason);
+    recPrint('Type "help" for commands.');
     recIn.focus();
   }
 
@@ -477,8 +490,14 @@
     await initCrypto();
     await vfs.mkdir('/root/');
 
+    const params = new URLSearchParams(location.search);
+    if (params.has('safe') || params.has('recovery')) {
+      enterRecovery('Safe mode booted via URL parameter.');
+      return;
+    }
+
     if (!config.environment) {
-      enterRecovery('No OS environment registered. Use "setenv <url>" to pair with Axon.');
+      enterRecovery('No environment set. Use "setenv <url>" then "reboot".');
       return;
     }
 
