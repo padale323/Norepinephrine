@@ -88,6 +88,21 @@
   };
 
   // ---------------------------------------------------------------
+  // APP REGISTRY
+  // A "command" is a callable; an "app" is a launchable UI. Plugins
+  // register apps here — { name, icon, description, launch(container) }
+  // — and ANY environment can list Kernel.apps and open them in whatever
+  // window/tab/whatever it wants by calling app.launch(containerEl).
+  // This is the successor to the old NoreAPI.launchApp overlay.
+  // ---------------------------------------------------------------
+  const appRegistry = {};
+  const registerApp = (id, meta) => {
+    appRegistry[id] = { id, name: meta.name || id, icon: meta.icon || '', description: meta.description || '', launch: meta.launch };
+    events.emit('app-registered', id);
+  };
+  const unregisterApp = (id) => { delete appRegistry[id]; events.emit('app-unregistered', id); };
+
+  // ---------------------------------------------------------------
   // TOS
   // ---------------------------------------------------------------
   const tos = {
@@ -252,6 +267,9 @@
     registerCommand,
     unregisterCommand,
     call,
+    apps: appRegistry,
+    registerApp,
+    unregisterApp,
     loadPlugin,
     loadEnvironment,
     // Runs a recovery-style command line even with no UI on screen —
