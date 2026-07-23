@@ -126,17 +126,46 @@
     }
   }
 
+  // An environment must call the `ready` callback it's given within
+  // ENV_TIMEOUT_MS of being loaded. If it doesn't (blank/broken/empty
+  // file, infinite hang, whatever) it's treated as failed: the kernel
+  // clears it from config and reloads, which drops straight to recovery
+  // per the boot sequence below. This never inspects root.innerHTML —
+  // an environment that's still legitimately loading async resources
+  // before its first render is not "empty", it just hasn't called
+  // ready() yet, so only the explicit signal (or the deadline) counts.
+  const ENV_TIMEOUT_MS = 10000;
   async function loadEnvironment(url) {
     if (!url) return;
+    root.innerHTML = '';
+    let settled = false;
+
+    const fail = (reason) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      events.emit('environment-error', { url, message: reason });
+      config.environment = null;
+      saveConfig();
+      storage.set('nore_recovery_reason', 'Environment failed: ' + reason);
+      location.reload();
+    };
+    const ready = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      events.emit('environment-loaded', url);
+    };
+    const timer = setTimeout(() => fail('did not confirm ready within ' + (ENV_TIMEOUT_MS / 1000) + 's'), ENV_TIMEOUT_MS);
+
     try {
-      root.innerHTML = '';
       const r = await fetch(url + '?t=' + Date.now());
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const code = await r.text();
-      new Function('Kernel', code)(window.Kernel);
-      events.emit('environment-loaded', url);
+      if (!code.trim()) throw new Error('environment file is empty');
+      new Function('Kernel', 'ready', code)(window.Kernel, ready);
     } catch (e) {
-      events.emit('environment-error', { url, message: e.message });
+      fail(e.message);
     }
   }
 
@@ -219,6 +248,9 @@
     call,
     loadPlugin,
     loadEnvironment,
+    // Runs a recovery-style command line even with no UI on screen —
+    // e.g. open devtools and call: Kernel.run('setenv <url>')
+    run: (line) => execCommandLine(line, (t) => console.log(t)),
     onReady: (fn) => { readyFired ? fn() : readyCallbacks.push(fn); },
     _loadedPlugins: loadedPlugins
   };
@@ -243,22 +275,34 @@
     rec.classList.add('active');
     recPrint('Norepinephrine recovery — v' + VERSION);
     recPrint('If you are seeing this, something went wrong, or you haven\'t configured Norepinephrine yet.');
+    const stored = storage.get('nore_recovery_reason');
+    if (stored) { recPrint(stored); storage.remove('nore_recovery_reason'); }
     if (reason) recPrint(reason);
     recPrint('Type "help" for commands.');
     recIn.focus();
   }
+
+  // Shared by the on-screen recovery input AND by Kernel.run(), so the
+  // same commands work even when the screen is black and recovery was
+  // never shown — open devtools and run e.g. Kernel.run('setenv <url>').
+  async function execCommandLine(line, printFn) {
+    const trimmed = (line || '').trim();
+    if (!trimmed) return;
+    printFn('> ' + trimmed);
+    const [name, ...rest] = trimmed.split(/\s+/);
+    const c = commandRegistry[name.toLowerCase()];
+    if (!c) { printFn('Unknown command: ' + name); return; }
+    try {
+      const result = await c.fn(...rest);
+      if (result !== undefined) printFn(typeof result === 'string' ? result : JSON.stringify(result, null, 2));
+      return result;
+    } catch (err) { printFn('Error: ' + err.message); }
+  }
+
   recIn.addEventListener('keydown', async (e) => {
     if (e.key !== 'Enter') return;
     const val = recIn.value; recIn.value = '';
-    if (!val.trim()) return;
-    recPrint('> ' + val);
-    const [name, ...rest] = val.trim().split(/\s+/);
-    try {
-      const c = commandRegistry[name.toLowerCase()];
-      if (!c) { recPrint('Unknown command: ' + name); return; }
-      const result = await c.fn(...rest);
-      if (result !== undefined) recPrint(typeof result === 'string' ? result : JSON.stringify(result, null, 2));
-    } catch (err) { recPrint('Error: ' + err.message); }
+    await execCommandLine(val, recPrint);
   });
   document.addEventListener('click', () => { if (rec.classList.contains('active')) recIn.focus(); });
 
