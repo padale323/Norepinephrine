@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Norepinephrine</title>
 <style>
-  html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #ccc; overflow: hidden; }
+  html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #ccc; overflow: hidden; font-family: monospace; }
   #root { position: fixed; inset: 0; }
 
   /* Recovery shell — plain text only, no theming. Off by default. */
@@ -16,10 +16,37 @@
     font: 14px monospace;
     padding: 12px; box-sizing: border-box;
     overflow-y: auto;
+    z-index: 9000;
   }
   #recovery.active { display: block; }
   #recovery div { white-space: pre-wrap; }
   #recovery input { background: transparent; border: none; outline: none; color: #ccc; font: inherit; width: 100%; }
+
+  /* Secure Kernel Prompt Overlay */
+  #secure-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 999999; /* Highest priority, cannot be covered by apps */
+    align-items: center; justify-content: center;
+    backdrop-filter: blur(4px);
+  }
+  .secure-box {
+    background: #111;
+    border: 1px solid #ff4444;
+    padding: 20px; width: 400px; max-width: 90%;
+    box-shadow: 0 0 20px rgba(255, 68, 68, 0.2);
+    text-align: center;
+  }
+  .secure-box h2 { margin: 0 0 15px 0; color: #ff4444; font-size: 18px; text-transform: uppercase; }
+  .secure-box p { margin: 0 0 20px 0; font-size: 14px; line-height: 1.4; }
+  .secure-box button {
+    background: #222; border: 1px solid #555; color: #ccc;
+    padding: 8px 16px; margin: 0 5px; cursor: pointer; font: inherit;
+  }
+  .secure-box button:hover { background: #333; }
+  .secure-box button.allow { border-color: #44ff44; color: #44ff44; }
+  .secure-box button.allow:hover { background: rgba(68, 255, 68, 0.1); }
 </style>
 </head>
 <body>
@@ -31,10 +58,22 @@
   <div>&gt; <input id="recovery-in" autocomplete="off" spellcheck="false" style="width:80%"></div>
 </div>
 
+<!-- Kernel Security Prompt UI -->
+<div id="secure-overlay">
+  <div class="secure-box">
+    <h2>System Security Alert</h2>
+    <p id="secure-msg">An application is requesting access to a secure key.</p>
+    <div>
+      <button id="secure-deny">DENY</button>
+      <button id="secure-allow" class="allow">ALLOW</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (function () {
   'use strict';
-  const VERSION = '2.0.0';
+  const VERSION = '2.1.0';
   const root = document.getElementById('root');
   const rec = document.getElementById('recovery');
   const recOut = document.getElementById('recovery-out');
@@ -58,7 +97,131 @@
   })();
 
   // ---------------------------------------------------------------
-  // EVENT BUS  (environments/plugins talk to each other through this)
+  // VIRTUAL FILE SYSTEM (Cookie FS)
+  // A hierarchical file system built on top of localStorage.
+  // ---------------------------------------------------------------
+  const fsData = storage.getJSON('nore_vfs', {});
+  const saveFS = () => storage.setJSON('nore_vfs', fsData);
+  
+  const vfs = {
+    _normalize: (path) => {
+      if (!path.startsWith('/')) path = '/' + path;
+      return path.replace(/\/+/g, '/'); // remove double slashes
+    },
+    exists: (path) => vfs._normalize(path) in fsData,
+    read: (path) => fsData[vfs._normalize(path)] || null,
+    write: (path, data) => { fsData[vfs._normalize(path)] = data; saveFS(); },
+    remove: (path) => { delete fsData[vfs._normalize(path)]; saveFS(); },
+    list: (dir) => {
+      let d = vfs._normalize(dir);
+      if (!d.endsWith('/')) d += '/';
+      const items = new Set();
+      Object.keys(fsData).forEach(k => {
+        if (k.startsWith(d) && k !== d) {
+          const relative = k.slice(d.length);
+          const slashIndex = relative.indexOf('/');
+          if (slashIndex === -1) items.add(relative); // File
+          else items.add(relative.slice(0, slashIndex) + '/'); // Directory
+        }
+      });
+      return Array.from(items).sort();
+    }
+  };
+
+  // ---------------------------------------------------------------
+  // SECURE KEYS SYSTEM (Web Crypto API)
+  // ---------------------------------------------------------------
+  let masterCryptoKey = null;
+  const sessionApprovals = new Set(); // Tracks keys approved this boot session
+
+  // UI elements for the permission prompt
+  const secOverlay = document.getElementById('secure-overlay');
+  const secMsg = document.getElementById('secure-msg');
+  const btnAllow = document.getElementById('secure-allow');
+  const btnDeny = document.getElementById('secure-deny');
+
+  // Initialize WebCrypto master key
+  async function initCrypto() {
+    let rawJwk = storage.getJSON('nore_master_jwk', null);
+    if (!rawJwk) {
+      // Generate AES-GCM 256-bit key on first run
+      masterCryptoKey = await crypto.subtle.generateKey(
+        { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]
+      );
+      rawJwk = await crypto.subtle.exportKey("jwk", masterCryptoKey);
+      storage.setJSON('nore_master_jwk', rawJwk);
+    } else {
+      masterCryptoKey = await crypto.subtle.importKey(
+        "jwk", rawJwk, { name: "AES-GCM" }, true, ["encrypt", "decrypt"]
+      );
+    }
+  }
+
+  // Ask user permission via UI prompt
+  function requestUserPermission(keyName) {
+    return new Promise(resolve => {
+      if (sessionApprovals.has(keyName)) return resolve(true);
+      secMsg.innerHTML = `An environment or plugin is requesting access to the secure system key:<br><br><b style="color:#fff">${keyName}</b><br><br>Allow access for this session?`;
+      secOverlay.style.display = 'flex';
+      
+      const cleanup = () => {
+        btnAllow.onclick = null; btnDeny.onclick = null;
+        secOverlay.style.display = 'none';
+      };
+
+      btnAllow.onclick = () => { sessionApprovals.add(keyName); cleanup(); resolve(true); };
+      btnDeny.onclick = () => { cleanup(); resolve(false); };
+    });
+  }
+
+  // ArrayBuffer <-> Base64 helpers for localStorage
+  const bufToBase64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+  const base64ToBuf = (b64) => Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+
+  const secureKeys = {
+    // Check if the current session already has access
+    hasAccess: (keyName) => sessionApprovals.has(keyName),
+    
+    // Explicitly prompt for access
+    requestAccess: async (keyName) => await requestUserPermission(keyName),
+
+    // Read and decrypt a secure key (Prompts if not previously approved)
+    read: async (keyName) => {
+      const allowed = await requestUserPermission(keyName);
+      if (!allowed) throw new Error("User denied access to secure key: " + keyName);
+      
+      const payload = storage.getJSON(`nore_vault_${keyName}`, null);
+      if (!payload) return null;
+      
+      try {
+        const iv = base64ToBuf(payload.iv);
+        const data = base64ToBuf(payload.data);
+        const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, masterCryptoKey, data);
+        return new TextDecoder().decode(decrypted);
+      } catch (e) {
+        throw new Error("Failed to decrypt secure key (corrupted or altered).");
+      }
+    },
+
+    // Encrypt and write to a secure key (Prompts if not previously approved)
+    write: async (keyName, value) => {
+      const allowed = await requestUserPermission(keyName);
+      if (!allowed) throw new Error("User denied access to secure key: " + keyName);
+
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const encoded = new TextEncoder().encode(value);
+      const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, masterCryptoKey, encoded);
+      
+      storage.setJSON(`nore_vault_${keyName}`, {
+        iv: bufToBase64(iv),
+        data: bufToBase64(encrypted)
+      });
+      return true;
+    }
+  };
+
+  // ---------------------------------------------------------------
+  // EVENT BUS
   // ---------------------------------------------------------------
   const listeners = {};
   const events = {
@@ -68,13 +231,13 @@
   };
 
   // ---------------------------------------------------------------
-  // CONFIG  (which environment to boot into, which plugins to load)
+  // CONFIG
   // ---------------------------------------------------------------
   const config = storage.getJSON('nore_config', { environment: null, plugins: [], early_plugins: [] });
   const saveConfig = () => storage.setJSON('nore_config', config);
 
   // ---------------------------------------------------------------
-  // COMMAND REGISTRY  (kernel "syscalls" — any environment's UI calls these)
+  // COMMAND REGISTRY
   // ---------------------------------------------------------------
   const commandRegistry = {};
   const registerCommand = (name, description, fn, source = 'kernel') => {
@@ -89,11 +252,6 @@
 
   // ---------------------------------------------------------------
   // APP REGISTRY
-  // A "command" is a callable; an "app" is a launchable UI. Plugins
-  // register apps here — { name, icon, description, launch(container) }
-  // — and ANY environment can list Kernel.apps and open them in whatever
-  // window/tab/whatever it wants by calling app.launch(containerEl).
-  // This is the successor to the old NoreAPI.launchApp overlay.
   // ---------------------------------------------------------------
   const appRegistry = {};
   const registerApp = (id, meta) => {
@@ -112,17 +270,10 @@
     accept() { storage.set('tosver', this.version); events.emit('tos-accepted'); }
   };
 
-  // ---------------------------------------------------------------
-  // STATS (background analytics ping)
-  // ---------------------------------------------------------------
   let stats = { active: '?' };
 
   // ---------------------------------------------------------------
   // PLUGIN / ENVIRONMENT LOADER
-  // Plugins are background services. An "environment" is just a plugin
-  // that takes ownership of Kernel.root and draws a whole UI into it
-  // (a CLI, a KDE-style desktop, whatever). Only one environment loads
-  // per boot, chosen by config.environment.
   // ---------------------------------------------------------------
   const loadedPlugins = new Set();
   async function loadPlugin(url) {
@@ -141,14 +292,6 @@
     }
   }
 
-  // An environment must call the `ready` callback it's given within
-  // ENV_TIMEOUT_MS of being loaded. If it doesn't (blank/broken/empty
-  // file, infinite hang, whatever) it's treated as failed: the kernel
-  // clears it from config and reloads, which drops straight to recovery
-  // per the boot sequence below. This never inspects root.innerHTML —
-  // an environment that's still legitimately loading async resources
-  // before its first render is not "empty", it just hasn't called
-  // ready() yet, so only the explicit signal (or the deadline) counts.
   const ENV_TIMEOUT_MS = 10000;
   async function loadEnvironment(url) {
     if (!url) return;
@@ -189,7 +332,7 @@
   }
 
   // ---------------------------------------------------------------
-  // BUILT-IN COMMANDS  (every environment gets these for free)
+  // BUILT-IN COMMANDS
   // ---------------------------------------------------------------
   registerCommand('help', 'List all available commands.', () =>
     Object.entries(commandRegistry)
@@ -198,67 +341,43 @@
 
   registerCommand('version', 'Norepinephrine version info.', () => ({ version: VERSION }));
   registerCommand('reboot', 'Reload the kernel.', () => location.reload());
-  registerCommand('wipe', 'Wipe all local data (config, plugins, history) and reload.', () => { localStorage.clear(); location.reload(); });
-  registerCommand('safemode', 'Reboot with plugins and environment skipped, straight to recovery.', () => { location.href = location.pathname + '?safe=true'; });
-  registerCommand('recovery', 'Reboot straight into the recovery shell.', () => { location.href = location.pathname + '?recovery=true'; });
-
-  registerCommand('setenv', 'Set the active environment URL. Usage: setenv <url>', (url) => {
-    config.environment = url || null; saveConfig();
-    return 'Environment set to ' + config.environment + '. Reboot to apply.';
+  registerCommand('wipe', 'Wipe all local data (config, plugins, history, VFS) and reload.', () => { localStorage.clear(); location.reload(); });
+  registerCommand('safemode', 'Reboot straight to recovery.', () => { location.href = location.pathname + '?safe=true'; });
+  
+  registerCommand('setenv', 'Set the active environment URL.', (url) => {
+    config.environment = url || null; saveConfig(); return 'Environment set. Reboot to apply.';
   });
   registerCommand('getenv', 'Get the active environment URL.', () => config.environment);
 
   registerCommand('tos', 'Get Terms of Service content.', () => tos.content || 'TOS not loaded yet.');
   registerCommand('accept', 'Accept the current Terms of Service.', () => { tos.accept(); return 'Accepted.'; });
-  registerCommand('stats', 'Get live network stats.', () => stats);
 
-  registerCommand('plugin.list', 'List installed plugins.', () => [
-    ...config.plugins.map((u) => ({ url: u, early: false })),
-    ...config.early_plugins.map((u) => ({ url: u, early: true }))
-  ]);
-  registerCommand('plugin.add', 'Add a plugin. Usage: plugin.add <url> [early]', (url, early) => {
-    if (!url) return 'Usage: plugin.add <url> [early]';
-    const isEarly = early === true || early === 'true' || early === '1';
-    if (config.plugins.includes(url) || config.early_plugins.includes(url)) return 'Already installed.';
-    (isEarly ? config.early_plugins : config.plugins).push(url);
-    saveConfig();
-    return 'Added' + (isEarly ? ' (early-load)' : '') + '. Reboot to apply.';
-  });
-  registerCommand('plugin.remove', 'Remove a plugin by URL.', (url) => {
-    config.plugins = config.plugins.filter((u) => u !== url);
-    config.early_plugins = config.early_plugins.filter((u) => u !== url);
-    saveConfig();
-    return 'Removed. Reboot to apply.';
-  });
-  registerCommand('plugin.move', 'Reorder within a list. Usage: plugin.move <from> <to> [early]', (from, to, early) => {
-    const isEarly = early === true || early === 'true' || early === '1';
-    const list = isEarly ? config.early_plugins : config.plugins;
-    const f = parseInt(from, 10), t = parseInt(to, 10);
-    if (!(f in list) || !(t in list)) return 'Invalid indices.';
-    const item = list.splice(f, 1)[0]; list.splice(t, 0, item);
-    saveConfig();
-    return 'Moved.';
-  });
+  // VFS Commands
+  registerCommand('ls', 'List files in VFS directory. Usage: ls <path>', (path = '/') => vfs.list(path).join('\n') || '(empty)');
+  registerCommand('touch', 'Create or overwrite a file. Usage: touch <path> [content]', (path, ...content) => { vfs.write(path, content.join(' ')); return 'File saved.'; });
+  registerCommand('cat', 'Read a file. Usage: cat <path>', (path) => { const f = vfs.read(path); return f === null ? 'File not found.' : f; });
+  registerCommand('rm', 'Delete a file. Usage: rm <path>', (path) => { vfs.remove(path); return 'Removed.'; });
 
-  registerCommand('beta.enable', 'Switch to the beta channel.', () => {
-    storage.set('beta_enabled', '1');
-    const u = new URL(location.href); u.searchParams.set('beta', ''); location.replace(u.toString());
+  // Keys Commands
+  registerCommand('keys.write', 'Securely encrypt data. Usage: keys.write <keyName> <value>', async (key, ...val) => {
+    await secureKeys.write(key, val.join(' ')); return `Saved to secure vault: ${key}`;
   });
-  registerCommand('beta.disable', 'Switch to the stable channel.', () => {
-    storage.set('beta_enabled', '0');
-    const u = new URL(location.href); u.searchParams.delete('beta'); location.replace(u.toString());
+  registerCommand('keys.read', 'Read decrypted data. Usage: keys.read <keyName>', async (key) => {
+    const val = await secureKeys.read(key); return val === null ? 'Key not found.' : val;
   });
 
   // ---------------------------------------------------------------
-  // PUBLIC KERNEL API — this is the entire surface environments/plugins get.
+  // PUBLIC KERNEL API
   // ---------------------------------------------------------------
   let readyFired = false;
   const readyCallbacks = [];
   window.Kernel = {
     version: VERSION,
     hwid,
-    root,                       // the only DOM node an environment is allowed to assume exists
+    root,
     storage,
+    vfs,             // Expose Cookie FS
+    keys: secureKeys, // Expose Secure Crypto Storage
     events,
     tos,
     get stats() { return stats; },
@@ -272,8 +391,6 @@
     unregisterApp,
     loadPlugin,
     loadEnvironment,
-    // Runs a recovery-style command line even with no UI on screen —
-    // e.g. open devtools and call: Kernel.run('setenv <url>')
     run: (line) => execCommandLine(line, (t) => console.log(t)),
     onReady: (fn) => { readyFired ? fn() : readyCallbacks.push(fn); },
     _loadedPlugins: loadedPlugins
@@ -281,11 +398,6 @@
 
   // ---------------------------------------------------------------
   // RECOVERY SHELL
-  // This is the ONLY built-in UI the kernel ever draws, and it never
-  // draws itself unless: (a) no environment is configured yet — like a
-  // fresh distro install with no display manager, (b) ?safe=true or
-  // ?recovery=true is in the URL, or (c) a hidden key sequence is used.
-  // It's a flat command runner over the same registry environments use.
   // ---------------------------------------------------------------
   function recPrint(t) {
     const d = document.createElement('div');
@@ -306,18 +418,19 @@
     recIn.focus();
   }
 
-  // Shared by the on-screen recovery input AND by Kernel.run(), so the
-  // same commands work even when the screen is black and recovery was
-  // never shown — open devtools and run e.g. Kernel.run('setenv <url>').
   async function execCommandLine(line, printFn) {
     const trimmed = (line || '').trim();
     if (!trimmed) return;
     printFn('> ' + trimmed);
-    const [name, ...rest] = trimmed.split(/\s+/);
+    
+    // Simple parser for quotes and spaces
+    const args = trimmed.match(/(?:[^\s"]+|"[^"]*")+/g).map(s => s.replace(/(^"|"$)/g, ''));
+    const name = args.shift();
+
     const c = commandRegistry[name.toLowerCase()];
     if (!c) { printFn('Unknown command: ' + name); return; }
     try {
-      const result = await c.fn(...rest);
+      const result = await c.fn(...args);
       if (result !== undefined) printFn(typeof result === 'string' ? result : JSON.stringify(result, null, 2));
       return result;
     } catch (err) { printFn('Error: ' + err.message); }
@@ -330,9 +443,6 @@
   });
   document.addEventListener('click', () => { if (rec.classList.contains('active')) recIn.focus(); });
 
-  // Hidden bootstrap: hold "R" five times in the first few seconds to
-  // force the recovery shell open even if an environment is running —
-  // same idea as the old "hold S for safe mode" trick.
   let rCount = 0;
   const rCheck = (e) => { if (e.key.toLowerCase() === 'r') { rCount++; if (rCount >= 5) { window.removeEventListener('keydown', rCheck); enterRecovery('(forced open via key sequence)'); } } };
   window.addEventListener('keydown', rCheck);
@@ -342,12 +452,13 @@
   // BOOT SEQUENCE
   // ---------------------------------------------------------------
   window.addEventListener('load', async () => {
+    // 1. Initialize core cryptography for Keys system before booting environments
+    await initCrypto();
+
     const params = new URLSearchParams(location.search);
     const safe = params.has('safe');
     const forceRecovery = params.has('recovery');
 
-    // TOS is awaited (not fire-and-forget) because environment loading
-    // is gated on it below. Analytics stays fire-and-forget.
     try {
       const r = await fetch('https://raw.githubusercontent.com/Norepinephrine-Tools/Terms/refs/heads/main/TOS.txt');
       tos.content = await r.text();
@@ -362,9 +473,6 @@
     };
     sync(); setInterval(sync, 60000);
 
-    // Recovery never loads plugins — forced recovery, safe mode,
-    // "no environment configured", and "TOS not accepted" all skip
-    // straight past the loader.
     if (forceRecovery) { enterRecovery(); readyFired = true; for (const fn of readyCallbacks) await fn(); return; }
     if (safe) { enterRecovery('Safe mode: plugins were not loaded.'); readyFired = true; for (const fn of readyCallbacks) await fn(); return; }
     if (!config.environment) { enterRecovery(); readyFired = true; for (const fn of readyCallbacks) await fn(); return; }
