@@ -1,11 +1,13 @@
 // @environment
 // Terminal Environment — a minimal CLI that draws into Kernel.root.
 // This is a demo of the environment contract: take Kernel.root, render
-// whatever you want, drive it entirely off Kernel.commands / Kernel.call.
+// whatever you want, drive it entirely off Kernel.commands / Kernel.call,
+// and call ready() once you've actually rendered — the kernel reverts
+// to recovery if ready() isn't called within 10 seconds of load.
 // Loaded via: Kernel.call('setenv', '<url-to-this-file>') then reboot,
-// or by editing kernel_config in localStorage directly.
+// or by editing nore_config in localStorage directly.
 
-(function (Kernel) {
+(function (Kernel, ready) {
   const root = Kernel.root;
   root.innerHTML = `
     <style>
@@ -82,4 +84,6 @@
   });
   root.addEventListener('click', () => input.focus());
   input.focus();
-})(Kernel);
+
+  ready();
+})(Kernel, ready);
