@@ -1,5 +1,5 @@
 // @environment
-// Terminal Environment — a minimal CLI that draws into Kernel.root.
+// norepinephrine-a — a minimal CLI environment that draws into Kernel.root.
 // This is a demo of the environment contract: take Kernel.root, render
 // whatever you want, drive it entirely off Kernel.commands / Kernel.call,
 // and call ready() once you've actually rendered — the kernel reverts
@@ -38,7 +38,7 @@
     wrap.scrollTop = wrap.scrollHeight;
   }
 
-  print('Terminal Environment loaded on NoreKernel v' + Kernel.version);
+  print('norepinephrine-a loaded on Norepinephrine v' + Kernel.version);
   print('Type "help" to list commands.');
 
   let history = Kernel.storage.getJSON('te_history', []);
